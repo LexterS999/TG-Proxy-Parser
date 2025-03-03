@@ -1,4 +1,4 @@
-name: Tg-parser
+name: TG-parser
 
 on:
   workflow_dispatch: # Ручной запуск из интерфейса GitHub
