@@ -29,7 +29,7 @@ requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.
 MAX_THREADS_PARSING = 50  # Оптимизировано: уменьшено количество потоков для стабильности
 REQUEST_TIMEOUT = 10      # Оптимизировано: увеличено время ожидания ответа
 MIN_PROFILES_TO_DOWNLOAD = 20 # Оптимизировано: увеличено минимальное количество профилей для сохранения
-MAX_PROFILES_TO_DOWNLOAD = 4000 # Оптимизировано: увеличено максимальное количество профилей для сохранения
+MAX_PROFILES_TO_DOWNLOAD = 100000 # Оптимизировано: увеличено максимальное количество профилей для сохранения
 ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan"}
 PROFILE_SCORE_WEIGHTS = { # Веса параметров для расчета скора профиля
 "security": 2,
