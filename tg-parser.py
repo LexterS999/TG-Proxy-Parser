@@ -11,6 +11,7 @@ from datetime import datetime
 import logging
 import binascii
 import urllib.parse as urllib_parse
+from typing import List
 
 # --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,6 +48,10 @@ START_DAY_PROFILE_DOWNLOAD = 1  # День начала периода скач�
 END_DAY_PROFILE_DOWNLOAD = 14   # День окончания периода скачивания профилей (включительно)
 # --- КОНЕЦ НОВЫХ КОНСТАНТ ---
 
+# --- Новые поисковые запросы ---
+SEARCH_QUERIES = ["vless config", "trojan profile", "hy2 channel", "tuic proxy", "vpn server", "proxy config"] #  Расширенный список запросов
+# --- Конец новых поисковых запросов ---
+
 # --- Конец глобальных констант ---
 if not os.path.exists('config-tg.txt'):
     with open('config-tg.txt', 'w'): pass
@@ -80,10 +85,59 @@ def substring_del(string_list):
     out = list(set(string_list)-set(out))
     return out
 
+def find_telegram_channels(search_queries: List[str]) -> List[str]:
+    """
+    Автоматически ищет Telegram-каналы по заданным поисковым запросам в Telegram Web.
+
+    Args:
+        search_queries: Список поисковых запросов для Telegram Web.
+
+    Returns:
+        Список уникальных имен найденных Telegram-каналов (без 't.me/').
+        Возвращает пустой список в случае ошибок или если каналы не найдены.
+    """
+    found_channels = set()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' # Важно для имитации браузера
+    }
+    for query in search_queries:
+        try:
+            search_url = f"https://t.me/search?q={urllib_parse.quote_plus(query)}" # URL-кодирование запроса
+            logging.info(f"Выполняется поиск каналов по запросу: '{query}'")
+            response = requests.get(search_url, headers=headers, timeout=REQUEST_TIMEOUT) # Добавляем headers
+            response.raise_for_status() # Проверка на HTTP ошибки
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            channel_links = soup.find_all('a', class_='tgme_channel_item_username') #  Ищем ссылки с классом tgme_channel_item_username
+
+            for link_tag in channel_links:
+                channel_name = link_tag.get_text(strip=True)[1:] # Извлекаем текст ссылки, убираем первый символ '@'
+                if channel_name: # Проверка на пустое имя канала
+                    found_channels.add(channel_name)
+
+            time.sleep(random.randint(3, 7)) # Задержка между запросами, чтобы не перегружать сервер
+
+        except requests.Timeout:
+            logging.warning(f"Таймаут при поиске каналов по запросу '{query}'.")
+        except requests.RequestException as e:
+            logging.error(f"Ошибка при поиске каналов по запросу '{query}': {e}")
+        except Exception as e:
+            logging.error(f"Непредвиденная ошибка при обработке поиска по запросу '{query}': {e}")
+
+    return list(found_channels)
+
+
 tg_name_json = json_load('telegram_channels.json') # Загружаем список каналов из telegram_channels.json
+
+discovered_channels = find_telegram_channels(SEARCH_QUERIES)
+logging.info(f"Найдено новых каналов через поиск: {len(discovered_channels)}")
+tg_name_json.extend(discovered_channels) # Добавляем найденные каналы к существующему списку
+tg_name_json = list(set(tg_name_json)) # Удаляем дубликаты, включая новые и старые
+
 initial_channels_count = len(tg_name_json) # Запоминаем начальное количество каналов
 
-logging.info(f'Всего имен каналов в telegram_channels.json: {initial_channels_count}') # Логируем начальное количество каналов
+logging.info(f'Всего имен каналов в telegram_channels.json после поиска: {initial_channels_count}') # Логируем обновленное количество каналов
+
 
 # --- ПРОВЕРКА ТЕКУЩЕГО ДНЯ МЕСЯЦА ---
 current_day = datetime.now().day
@@ -231,7 +285,7 @@ tg_name_json = list(set(tg_name_json)) # Удаляем дубликаты
 tg_name_json = sorted(tg_name_json) # Сортируем каналы
 
 walen = len(tg_name_json)
-logging.info(f'Начинаем парсинг {walen} телеграм каналов из telegram_channels.json...') # Обновлено сообщение лога
+logging.info(f'Начинаем парсинг {walen} телеграм каналов...') # Обновлено сообщение лога
 threads = []
 for url in tg_name_json:
     thread = threading.Thread(target=process_channel, args=(url,))
