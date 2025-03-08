@@ -39,6 +39,8 @@ PROFILE_SCORE_WEIGHTS = {
     "obfs": 1,
     "mport": 1,
 }
+MAX_FAILED_CHECKS = 4 # Новая константа: Максимальное количество неудачных проверок перед удалением канала
+FAILURE_HISTORY_FILE = 'channel_failure_history.json' # Файл для хранения истории неудач
 
 START_DAY_PROFILE_DOWNLOAD = 1
 END_DAY_PROFILE_DOWNLOAD = 14
@@ -70,6 +72,16 @@ def json_load(path):
     except json.JSONDecodeError:
         logging.error(f"Ошибка декодирования JSON в файле: {path}. Возвращаем None.")
         return None
+
+def json_save(data, path):
+    """Сохраняет данные в JSON файл."""
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении JSON в файл {path}: {e}")
+        return False
 
 def substring_del(string_list):
     """
@@ -156,12 +168,14 @@ def calculate_profile_score(profile):
 
     return score
 
-def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles):
+def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove):
     """
     Обрабатывает один телеграм канал для извлечения профилей.
 
     Скачивает несколько страниц сообщений канала, ищет блоки кода с профилями,
     рассчитывает скор для каждого профиля и добавляет в общий список.
+    Если после проверки не найдено профилей, увеличивает счетчик неудачных проверок
+    и, при достижении лимита, добавляет канал в список на удаление.
 
     Аргументы:
         channel_url (str): URL канала Telegram (без 'https://t.me/s/').
@@ -170,8 +184,11 @@ def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_cha
         telegram_channel_names (list): Список имен телеграм каналов.
         channels_parsed_count (int): Общее количество каналов для парсинга (используется для логирования).
         channels_with_profiles (set): Множество для отслеживания каналов, в которых найдены профили.
+        channel_failure_counts (dict): Словарь для хранения счетчиков неудачных проверок каналов.
+        channels_to_remove (list): Список каналов для удаления.
     """
     thread_semaphore.acquire()
+    channel_removed_in_run = False # Флаг, чтобы избежать двойного добавления в channels_to_remove за один проход
     try:
         html_pages = []
         current_url = channel_url
@@ -213,31 +230,47 @@ def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_cha
 
         if not html_pages:
             logging.warning(f"Не удалось загрузить страницы для канала {channel_url} после нескольких попыток. Пропускаем канал.")
-            return
+            failed_check = True # Считаем как неудачная проверка из-за проблем с загрузкой
+        else:
+            failed_check = False # Считаем как успешная загрузка страниц (даже если профилей не нашлось)
+
 
         channel_index = telegram_channel_names.index(channel_url) + 1
         logging.info(f'{channel_index} из {channels_parsed_count} - {channel_url}')
 
-        for page in html_pages:
-            soup = BeautifulSoup(page, 'html.parser')
-            code_tags = soup.find_all(class_='tgme_widget_message_text')
-            for code_tag in code_tags:
-                code_content_lines = str(code_tag).split('<br/>')
-                for line in code_content_lines:
-                    cleaned_content = re.sub(htmltag_pattern, '', line).strip()
-                    for protocol in ALLOWED_PROTOCOLS:
-                        if f"{protocol}://" in cleaned_content:
-                            profile_link = cleaned_content
-                            score = calculate_profile_score(profile_link)
-                            channel_profiles.append({'profile': profile_link, 'score': score})
-                            god_tg_name = True
-                            break
+        if not failed_check: # Продолжаем парсинг, только если загрузка страниц прошла успешно
+            for page in html_pages:
+                soup = BeautifulSoup(page, 'html.parser')
+                code_tags = soup.find_all(class_='tgme_widget_message_text')
+                for code_tag in code_tags:
+                    code_content_lines = str(code_tag).split('<br/>')
+                    for line in code_content_lines:
+                        cleaned_content = re.sub(htmltag_pattern, '', line).strip()
+                        for protocol in ALLOWED_PROTOCOLS:
+                            if f"{protocol}://" in cleaned_content:
+                                profile_link = cleaned_content
+                                score = calculate_profile_score(profile_link)
+                                channel_profiles.append({'profile': profile_link, 'score': score})
+                                god_tg_name = True
+                                break
 
         if god_tg_name:
             channels_with_profiles.add(channel_url)
+            channel_failure_counts[channel_url] = 0 # Сброс счетчика неудач, если профили найдены
+        else:
+            if channel_url in channel_failure_counts:
+                channel_failure_counts[channel_url] += 1
+            else:
+                channel_failure_counts[channel_url] = 1
 
-        if not channel_profiles:
-            logging.info(f"Профили не найдены в канале {channel_url}.")
+            if channel_failure_counts[channel_url] >= MAX_FAILED_CHECKS and channel_url not in channels_to_remove:
+                channels_to_remove.append(channel_url)
+                channel_removed_in_run = True # Помечаем, что канал был добавлен на удаление в этом проходе
+                logging.info(f"Канал '{channel_url}' будет удален из списка за {MAX_FAILED_CHECKS} последовательных неудачных проверок.")
+            elif not god_tg_name and not channel_removed_in_run: # Чтобы не было лишнего лога, если канал уже удален в этом проходе
+                logging.info(f"Профили не найдены в канале {channel_url}. Неудачных проверок подряд: {channel_failure_counts[channel_url]}/{MAX_FAILED_CHECKS}.")
+            elif channel_removed_in_run: # Лог для случая, когда канал удален
+                pass # Уже залогировано выше
 
         parsed_profiles.extend(channel_profiles)
 
@@ -318,8 +351,8 @@ def process_parsed_profiles(parsed_profiles_list):
     new_processed_profiles_scored = []
     for profile_data in unique_profiles_scored:
         x = profile_data['profile']
-        x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip() # Refactored and more efficient regex for removing trailing chars
-        if x[-2:-1] == '%': # Handling double percentage encoding case, after regex cleanup
+        x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip()
+        if x[-2:-1] == '%':
             x=x[:-2]
         new_processed_profiles_scored.append({'profile': x.strip(), 'score': profile_data['score']})
 
@@ -338,14 +371,29 @@ def process_parsed_profiles(parsed_profiles_list):
     final_profiles_scored.sort(key=lambda item: item['score'], reverse=True)
     return final_profiles_scored
 
+def load_failure_history():
+    """Загружает историю неудачных проверок каналов из файла."""
+    history = json_load(FAILURE_HISTORY_FILE)
+    return history if history else {}
+
+def save_failure_history(history):
+    """Сохраняет историю неудачных проверок каналов в файл."""
+    return json_save(history, FAILURE_HISTORY_FILE)
+
+
 if __name__ == "__main__":
-    telegram_channel_names = json_load('telegram_channels.json')
-    if telegram_channel_names is None:
+    telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
+    if telegram_channel_names_original is None:
         logging.critical("Не удалось загрузить список каналов из telegram_channels.json. Завершение работы.")
         exit(1)
 
-    initial_channels_count = len(telegram_channel_names)
-    logging.info(f'Всего имен каналов в telegram_channels.json: {initial_channels_count}')
+    # Фильтрация и удаление каналов с некорректными именами до начала обработки
+    telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5] # Убедимся, что имена каналов валидны после загрузки
+    telegram_channel_names_original = list(set(telegram_channel_names_original)) # Удаляем дубликаты
+    telegram_channel_names_original.sort() # Сортируем каналы
+
+    initial_channels_count = len(telegram_channel_names_original)
+    logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
 
     current_day = datetime.now().day
     if not (START_DAY_PROFILE_DOWNLOAD <= current_day <= END_DAY_PROFILE_DOWNLOAD):
@@ -353,19 +401,26 @@ if __name__ == "__main__":
         logging.info(f'Завершено!')
         exit()
 
+    channel_failure_counts = load_failure_history() # Загрузка истории неудач
+    channels_to_remove = [] # Список каналов на удаление в этом прогоне
+
+    # Создаем копию списка каналов для итерации, чтобы можно было удалять из оригинала
+    telegram_channel_names_to_parse = list(telegram_channel_names_original) # Работаем с копией списка каналов
+    channels_parsed_count = len(telegram_channel_names_to_parse)
+
     logging.info(f'Начинаем парсинг...')
     start_time = datetime.now()
 
     thread_semaphore = threading.Semaphore(MAX_THREADS_PARSING)
     parsed_profiles = []
     channels_with_profiles = set()
-    channels_parsed_count = len(telegram_channel_names)
+
 
     logging.info(f'Начинаем парсинг {channels_parsed_count} телеграм каналов из telegram_channels.json...')
 
     threads = []
-    for channel_name in telegram_channel_names:
-        thread = threading.Thread(target=process_channel, args=(channel_name, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles))
+    for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
+        thread = threading.Thread(target=process_channel, args=(channel_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove))
         threads.append(thread)
         thread.start()
 
@@ -384,6 +439,21 @@ if __name__ == "__main__":
         for profile_data in profiles_to_save:
             file.write(profile_data['profile'].encode("utf-8").decode("utf-8") + "\n")
 
+    # Удаление каналов из telegram_channel_names_original и сохранение в файл
+    if channels_to_remove:
+        logging.info(f"Удаляем каналы: {channels_to_remove}")
+        telegram_channel_names_updated = [chan for chan in telegram_channel_names_original if chan not in channels_to_remove]
+        if telegram_channel_names_updated != telegram_channel_names_original: # Проверка на изменения перед сохранением
+            json_save(telegram_channel_names_updated, 'telegram_channels.json')
+            logging.info(f"Обновленный список каналов сохранен в telegram_channels.json. Удалено каналов: {len(channels_to_remove)}.")
+        else:
+            logging.info("Список каналов в telegram_channels.json не изменился (удаление не потребовалось).")
+    else:
+        logging.info("Нет каналов для удаления.")
+
+
+    save_failure_history(channel_failure_counts) # Сохранение истории неудач
+
     end_time = datetime.now()
     total_time = end_time - start_time
 
@@ -397,5 +467,9 @@ if __name__ == "__main__":
     logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
     logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
     logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
+    if channels_to_remove:
+        logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
+    else:
+        logging.info(f'Каналов удалено из списка: 0')
     logging.info(f'{"-"*40}')
     logging.info('Завершено!')
