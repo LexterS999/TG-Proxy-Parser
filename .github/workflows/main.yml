@@ -32,6 +32,6 @@ jobs:
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add telegram_channels.json config-tg.txt # Обновляем только telegram_channels.json и config-tg.txt
-          git commit -m "автоматическое обновление telegram_channels.json и config-tg.txt" || echo "No changes to commit" # Обновлено сообщение коммита
+          git add telegram_channels.json config-tg.txt channel_failure_history.json # Добавлен channel_failure_history.json
+          git commit -m "Автоматическое обновление telegram_channels.json, config-tg.txt и channel_failure_history.json" || echo "No changes to commit" # Обновлено сообщение коммита
           git push origin main || echo "No changes to push"
