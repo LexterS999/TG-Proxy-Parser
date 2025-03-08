@@ -1,7 +1,5 @@
 # Telegram Channel Profile Parser and Extractor
 
-[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
-
 ## Описание
 
 Этот Python скрипт предназначен для автоматического сбора конфигурационных профилей (vless, hy2, tuic, trojan) из телеграм-каналов. Скрипт использует многопоточность для ускорения процесса парсинга, оценивает найденные профили на основе заданных критериев, фильтрует дубликаты и подстроки, и сохраняет лучшие профили в файл `config-tg.txt`.
