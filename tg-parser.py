@@ -438,7 +438,9 @@ async def process_parsed_profiles(parsed_profiles_list):
     final_profiles_scored = fresh_profiles_scored
     logging.info(f"После фильтрации по свежести осталось {len(final_profiles_scored)} профилей.") # Лог о количестве профилей после фильтрации
 
-    final_profiles_scored.sort(key=lambda item: item['score'], reverse=True)
+    # Исправление: Обработка NoneType при сортировке
+    final_profiles_scored.sort(key=lambda item: item.get('score', 0) if item and isinstance(item, dict) else 0, reverse=True)
+
     return final_profiles_scored
 
 def load_failure_history():
@@ -465,7 +467,7 @@ def load_no_more_pages_history():
 
 def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
-    return json_save(history, NO_MORE_pages_HISTORY_FILE)
+    return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
 
 
 if __name__ == "__main__":
