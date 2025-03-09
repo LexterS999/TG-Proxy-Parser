@@ -7,7 +7,7 @@ import random
 import re
 import urllib.parse as urllib_parse
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 # --- Настройка логирования ---
@@ -42,7 +42,7 @@ PROFILE_SCORE_WEIGHTS = {
 MAX_FAILED_CHECKS = 4 # Новая константа: Максимальное количество неудачных проверок перед удалением канала
 FAILURE_HISTORY_FILE = 'channel_failure_history.json' # Файл для хранения истории неудач
 
-PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в днях (от момента запуска скрипта)
+PROFILE_FRESHNESS_DAYS = 4 # Период свежести профилей в днях (от момента запуска скрипта)
 # --- Конец глобальных констант ---
 
 if not os.path.exists('config-tg.txt'):
@@ -240,18 +240,28 @@ def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_cha
         if not failed_check: # Продолжаем парсинг, только если загрузка страниц прошла успешно
             for page in html_pages:
                 soup = BeautifulSoup(page, 'html.parser')
-                code_tags = soup.find_all(class_='tgme_widget_message_text')
-                for code_tag in code_tags:
-                    code_content_lines = str(code_tag).split('<br/>')
-                    for line in code_content_lines:
-                        cleaned_content = re.sub(htmltag_pattern, '', line).strip()
-                        for protocol in ALLOWED_PROTOCOLS:
-                            if f"{protocol}://" in cleaned_content:
-                                profile_link = cleaned_content
-                                score = calculate_profile_score(profile_link)
-                                channel_profiles.append({'profile': profile_link, 'score': score})
-                                god_tg_name = True
-                                break
+                message_blocks = soup.find_all('div', class_='tgme_widget_message') # Находим блоки сообщений
+                for message_block in message_blocks: # Итерируемся по блокам сообщений
+                    code_tags = message_block.find_all(class_='tgme_widget_message_text') # Ищем code_tags внутри блока сообщения
+                    time_tag = message_block.find('time', class_='datetime') # Ищем time_tag внутри блока сообщения
+                    message_datetime = None
+                    if time_tag and 'datetime' in time_tag.attrs:
+                        try:
+                            message_datetime = datetime.fromisoformat(time_tag['datetime']).replace(tzinfo=timezone.utc) # Добавляем timezone awareness
+                        except ValueError:
+                            logging.warning(f"Не удалось распарсить дату из time tag: {time_tag['datetime']}")
+
+                    for code_tag in code_tags:
+                        code_content_lines = str(code_tag).split('<br/>')
+                        for line in code_content_lines:
+                            cleaned_content = re.sub(htmltag_pattern, '', line).strip()
+                            for protocol in ALLOWED_PROTOCOLS:
+                                if f"{protocol}://" in cleaned_content:
+                                    profile_link = cleaned_content
+                                    score = calculate_profile_score(profile_link)
+                                    channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime}) # Сохраняем дату сообщения
+                                    god_tg_name = True
+                                    break
 
         if god_tg_name:
             channels_with_profiles.add(channel_url)
@@ -281,6 +291,7 @@ def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_cha
 def clean_profile(profile_string):
     """Очищает строку профиля от лишних символов и артефактов."""
     part = profile_string
+    part = profile_string
     part = re.sub('%0A', '', part)
     part = re.sub('%250A', '', part)
     part = re.sub('%0D', '', part)
@@ -296,10 +307,10 @@ def clean_profile(profile_string):
 def process_parsed_profiles(parsed_profiles_list):
     """
     Обрабатывает список спарсенных профилей: очистка, фильтрация по протоколам,
-    удаление дубликатов и подстрок, итоговая сортировка.
+    удаление дубликатов и подстрок, фильтрация по свежести, итоговая сортировка.
 
     Аргументы:
-        parsed_profiles_list (list): Список словарей с профилями и их скорами.
+        parsed_profiles_list (list): Список словарей с профилями и их скорами и датами.
 
     Возвращает:
         list: Список обработанных и отсортированных профилей (словари).
@@ -314,30 +325,30 @@ def process_parsed_profiles(parsed_profiles_list):
             protocol = "vless"
             part = f'vless://{cleaned_profile_string.split("vless://")[1]}'
             if "flow=xtls-rprx-direct" not in part and "@" in part and ":" in part[8:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score']}
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date']} # Передаем дату
 
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
             part = f'hy2://{cleaned_profile_string.split("hy2://")[1]}'
             if "@" in part and ":" in part[6:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score']}
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date']} # Передаем дату
 
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
             part = f'tuic://{cleaned_profile_string.split("tuic://")[1]}'
             if ":" in part[7:] and "@" in part:
-                profile_to_add = {'profile': part.strip(), 'score': item['score']}
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date']} # Передаем дату
 
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
             part = f'trojan://{cleaned_profile_string.split("trojan://")[1]}'
             if "@" in part and ":" in part[9:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score']}
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date']} # Передаем дату
 
         if profile_to_add:
             processed_profiles.append(profile_to_add)
 
-    logging.info(f'Пытаемся удалить поврежденные конфигурации и дубликаты...')
+    logging.info(f'Пытаемся удалить поврежденные конфигурации, дубликаты и фильтровать по свежести...')
 
     unique_profiles_scored = []
     seen_profiles = set()
@@ -353,7 +364,7 @@ def process_parsed_profiles(parsed_profiles_list):
         x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip()
         if x[-2:-1] == '%':
             x=x[:-2]
-        new_processed_profiles_scored.append({'profile': x.strip(), 'score': profile_data['score']})
+        new_processed_profiles_scored.append({'profile': x.strip(), 'score': profile_data['score'], 'date': profile_data['date']}) # Передаем дату
 
     processed_profiles_scored = new_processed_profiles_scored
 
@@ -366,6 +377,22 @@ def process_parsed_profiles(parsed_profiles_list):
         if profile_data['profile'] in profile_strings_set:
             final_profiles_scored.append(profile_data)
             profile_strings_set.remove(profile_data['profile'])
+
+    # --- Фильтрация по свежести ---
+    fresh_profiles_scored = []
+    now = datetime.now(tz=timezone.utc) # Timezone aware current datetime
+    for profile_data in final_profiles_scored:
+        if 'date' in profile_data and isinstance(profile_data['date'], datetime):
+            time_difference = now - profile_data['date']
+            if time_difference <= timedelta(days=PROFILE_FRESHNESS_DAYS):
+                fresh_profiles_scored.append(profile_data)
+            else:
+                logging.info(f"Удален устаревший профиль (старше {PROFILE_FRESHNESS_DAYS} дней): дата {profile_data['date'].strftime('%Y-%m-%d %H:%M:%S UTC')}, профиль: {profile_data['profile'][:100]}...") # Лог об удалении
+        else:
+            fresh_profiles_scored.append(profile_data) # Оставляем профили без даты (если не удалось извлечь) и логируем это, чтобы не потерять их полностью, но можно пересмотреть это решение
+
+    final_profiles_scored = fresh_profiles_scored
+    logging.info(f"После фильтрации по свежести осталось {len(final_profiles_scored)} профилей.") # Лог о количестве профилей после фильтрации
 
     final_profiles_scored.sort(key=lambda item: item['score'], reverse=True)
     return final_profiles_scored
@@ -393,9 +420,6 @@ if __name__ == "__main__":
 
     initial_channels_count = len(telegram_channel_names_original)
     logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
-
-    # --- Блок проверки текущего дня месяца удален ---
-    # --- Теперь скрипт запускается всегда, независимо от даты ---
 
     channel_failure_counts = load_failure_history() # Загрузка истории неудач
     channels_to_remove = [] # Список каналов на удаление в этом прогоне
@@ -426,7 +450,7 @@ if __name__ == "__main__":
     logging.info(f'Парсинг завершен - {str(datetime.now() - start_time).split(".")[0]}')
     logging.info(f'Начинаем обработку и фильтрацию спарсенных конфигов...')
 
-    final_profiles_scored = process_parsed_profiles(parsed_profiles)
+    final_profiles_scored = process_parsed_profiles(parsed_profiles) # process_parsed_profiles теперь фильтрует по свежести
 
     num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
     profiles_to_save = final_profiles_scored[:num_profiles_to_save]
@@ -461,7 +485,7 @@ if __name__ == "__main__":
     logging.info(f'Каналов обработано: {channels_parsed_count}')
     logging.info(f'Каналов, в которых найдены профили: {len(channels_with_profiles)}')
     logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
-    logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
+    logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}') # Количество уникальных профилей уже после фильтрации по свежести
     logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
     if channels_to_remove:
         logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
