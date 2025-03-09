@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
-import geoip2
 import geoip2.database
 import geoip2.errors
 import asyncio.exceptions
