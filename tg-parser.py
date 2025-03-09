@@ -486,8 +486,6 @@ def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
     return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
 
-# ... (остальной код без изменений)
-
 if __name__ == "__main__":
 
     telegram_channel_names_original = json_load('telegram_channels.json')
@@ -540,8 +538,7 @@ if __name__ == "__main__":
 
         with open("config-tg.txt", "w", encoding="utf-8") as file:
             for profile_data in profiles_to_save:
-        # Новый формат: сначала ссылка, затем пробел и наименование профиля
-        file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')} {profile_data['profile_name']}\n")
+                file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')} {profile_data['profile_name']}\n")
 
         if channels_to_remove:
             logging.info(f"Удаляем каналы: {channels_to_remove}")
@@ -582,4 +579,3 @@ if __name__ == "__main__":
         logging.info(f'Каналов удалено из списка: 0')
     logging.info(f'{"-"*40}')
     logging.info('Завершено!')
-
