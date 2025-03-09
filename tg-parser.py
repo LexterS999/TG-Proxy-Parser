@@ -18,8 +18,8 @@ import shutil
 
 # --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # --- Конец настройки логирования ---
+
 requests.post = lambda url, **kwargs: requests.request(
     method="POST", url=url, verify=False, **kwargs
 )
@@ -45,14 +45,14 @@ PROFILE_SCORE_WEIGHTS = {
     "obfs": 1,
     "mport": 1,
 }
-MAX_FAILED_CHECKS = 4 # Максимальное количество неудачных проверок перед удалением канала
-FAILURE_HISTORY_FILE = 'channel_failure_history.json' # Файл для хранения истории неудач
-NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json' # Файл для хранения истории "Больше страниц не найдено"
-MAX_NO_MORE_PAGES_COUNT = 4 # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
-PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в днях (от момента запуска скрипта)
+MAX_FAILED_CHECKS = 4  # Максимальное количество неудачных проверок перед удалением канала
+FAILURE_HISTORY_FILE = 'channel_failure_history.json'  # Файл для хранения истории неудач
+NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'  # Файл для хранения истории "Больше страниц не найдено"
+MAX_NO_MORE_PAGES_COUNT = 4  # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
+PROFILE_FRESHNESS_DAYS = 7  # Период свежести профилей в днях (от момента запуска скрипта)
 
 # --- Константы для флагов и эмодзи ---
-COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответствия кодов стран и эмодзи флагов (ISO 3166-1 alpha-2)
+COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = {
     "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "FR": "🇫🇷", "JP": "🇯🇵",
     "CN": "🇨🇳", "RU": "🇷🇺", "KR": "🇰🇷", "SG": "🇸🇬", "CA": "🇨🇦",
     "AU": "🇦🇺", "IN": "🇮🇳", "BR": "🇧🇷", "CH": "🇨🇭", "SE": "🇸🇪",
@@ -64,17 +64,15 @@ COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответс
     "RO": "🇷🇴", "IL": "🇮🇱", "EG": "🇪🇬", "NG": "🇳🇬", "KE": "🇰🇪",
     "PK": "🇵🇰", "BD": "🇧🇩", "LK": "🇱🇰", "IR": "🇮🇷", "IQ": "🇮🇶",
     "SY": "🇸🇾", "JO": "🇯🇴", "KW": "🇰🇼", "QA": "🇶🇦", "BH": "🇧🇭",
-    "OM": "🇴🇲", "LB": "🇱🇧", "CY": "🇨🇾", "GLOBAL": "🌐", "UNKNOWN": "🤔" # Default flags
+    "OM": "🇴🇲", "LB": "🇱🇧", "CY": "🇨🇾", "GLOBAL": "🌐", "UNKNOWN": "🤔"
 }
-DEFAULT_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["GLOBAL"] # Emoji for unknown country
-UNKNOWN_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["UNKNOWN"] # Emoji for when country can't be determined
-STATIC_PROFILE_FLAG = DEFAULT_FLAG_EMOJI # Статичный флаг для профилей, т.к. GeoLite удален
-
-VLESS_EMOJI = "🌠" # ✨ # Другой красивый эмодзи для VLESS (🌠 - shooting star, ✨ - sparkles)
+DEFAULT_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["GLOBAL"]
+UNKNOWN_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["UNKNOWN"]
+STATIC_PROFILE_FLAG = DEFAULT_FLAG_EMOJI
+VLESS_EMOJI = "🌠"  # ✨
 HY2_EMOJI = "⚡"
 TUIC_EMOJI = "🚀"
 TROJAN_EMOJI = "🛡️"
-
 # --- Конец глобальных констант ---
 
 if not os.path.exists('config-tg.txt'):
@@ -123,7 +121,8 @@ def substring_del(string_list):
     подстрокой и удаляется из результирующего списка.
 
     Пример:
-    ['abc', 'abcd', 'def', 'ghi'] -> ['abcd', 'def', 'ghi']  ('abc' является подстрокой 'abcd')
+    ['abc', 'abcd', 'def', 'ghi'] -> ['abcd', 'def', 'ghi']
+    ('abc' является подстрокой 'abcd')
 
     Возвращает:
         list: Список строк, из которого удалены подстроки.
@@ -197,14 +196,14 @@ def calculate_profile_score(profile):
         logging.error(f"Ошибка при расчете скора профиля '{profile}': {e}")
         return 0
 
+    return score
+
 async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts):
     """
     Обрабатывает один телеграм канал для извлечения профилей.
-
-    ... (описание функции осталось без изменений) ...
     """
     thread_semaphore.acquire()
-    channel_removed_in_run = False # Флаг, чтобы избежать двойного добавления в channels_to_remove за один проход
+    channel_removed_in_run = False  # Флаг, чтобы избежать двойного добавления в channels_to_remove за один проход
     try:
         html_pages = []
         current_url = channel_url
@@ -212,7 +211,7 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
         god_tg_name = False
         htmltag_pattern = re.compile(r'<.*?>')
         pattern_datbef = re.compile(r'(?:data-before=")(\d*)')
-        no_more_pages_in_run = False # Флаг, чтобы отслеживать "Больше страниц не найдено" в текущем проходе
+        no_more_pages_in_run = False  # Флаг, чтобы отслеживать "Больше страниц не найдено" в текущем проходе
 
         for attempt in range(2):
             while True:
@@ -223,7 +222,7 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
                     last_datbef = re.findall(pattern_datbef, response.text)
                     if not last_datbef:
                         logging.info(f"Больше страниц не найдено для {channel_url}")
-                        no_more_pages_in_run = True # Устанавливаем флаг, если страниц больше нет
+                        no_more_pages_in_run = True  # Устанавливаем флаг, если страниц больше нет
                         break
                     current_url = f'{channel_url}?before={last_datbef[0]}'
                     break
@@ -248,28 +247,26 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
 
         if not html_pages:
             logging.warning(f"Не удалось загрузить страницы для канала {channel_url} после нескольких попыток. Пропускаем канал.")
-            failed_check = True # Считаем как неудачная проверка из-за проблем с загрузкой
+            failed_check = True  # Считаем как неудачная проверка из-за проблем с загрузкой
         else:
-            failed_check = False # Считаем как успешная загрузка страниц (даже если профилей не нашлось)
-
+            failed_check = False  # Считаем как успешная загрузка страниц (даже если профилей не нашлось)
 
         channel_index = telegram_channel_names.index(channel_url) + 1
         logging.info(f'{channel_index} из {channels_parsed_count} - {channel_url}')
 
-        if not failed_check: # Продолжаем парсинг, только если загрузка страниц прошла успешно
+        if not failed_check:  # Продолжаем парсинг, только если загрузка страниц прошла успешно
             for page in html_pages:
                 soup = BeautifulSoup(page, 'html.parser')
-                message_blocks = soup.find_all('div', class_='tgme_widget_message') # Находим блоки сообщений
-                for message_block in message_blocks: # Итерируемся по блокам сообщений
-                    code_tags = message_block.find_all(class_='tgme_widget_message_text') # Ищем code_tags внутри блока сообщения
-                    time_tag = message_block.find('time', class_='datetime') # Ищем time_tag внутри блока сообщения
+                message_blocks = soup.find_all('div', class_='tgme_widget_message')  # Находим блоки сообщений
+                for message_block in message_blocks:  # Итерируемся по блокам сообщений
+                    code_tags = message_block.find_all(class_='tgme_widget_message_text')  # Ищем code_tags внутри блока сообщения
+                    time_tag = message_block.find('time', class_='datetime')  # Ищем time_tag внутри блока сообщения
                     message_datetime = None
                     if time_tag and 'datetime' in time_tag.attrs:
                         try:
-                            message_datetime = datetime.fromisoformat(time_tag['datetime']).replace(tzinfo=timezone.utc) # Добавляем timezone awareness
+                            message_datetime = datetime.fromisoformat(time_tag['datetime']).replace(tzinfo=timezone.utc)
                         except ValueError:
                             logging.warning(f"Не удалось распарсить дату из time tag: {time_tag['datetime']}")
-
                     for code_tag in code_tags:
                         code_content_lines = str(code_tag).split('<br/>')
                         for line in code_content_lines:
@@ -279,14 +276,13 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
                                     profile_link = cleaned_content
                                     score = calculate_profile_score(profile_link)
                                     channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
-
                                     god_tg_name = True
                                     break
 
         if god_tg_name:
             channels_with_profiles.add(channel_url)
-            channel_failure_counts[channel_url] = 0 # Сброс счетчика неудач, если профили найдены
-            no_more_pages_counts[channel_url] = 0 # Сброс счетчика "Больше страниц не найдено", если профили найдены
+            channel_failure_counts[channel_url] = 0  # Сброс счетчика неудач, если профили найдены
+            no_more_pages_counts[channel_url] = 0  # Сброс счетчика "Больше страниц не найдено", если профили найдены
         else:
             if channel_url in channel_failure_counts:
                 channel_failure_counts[channel_url] += 1
@@ -295,14 +291,14 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
 
             if channel_failure_counts[channel_url] >= MAX_FAILED_CHECKS and channel_url not in channels_to_remove:
                 channels_to_remove.append(channel_url)
-                channel_removed_in_run = True # Помечаем, что канал был добавлен на удаление в этом проходе
+                channel_removed_in_run = True
                 logging.info(f"Канал '{channel_url}' будет удален из списка за {MAX_FAILED_CHECKS} последовательных неудачных проверок.")
-            elif not god_tg_name and not channel_removed_in_run: # Чтобы не было лишнего лога, если канал уже удален в этом проходе
+            elif not god_tg_name and not channel_removed_in_run:
                 logging.info(f"Профили не найдены в канале {channel_url}. Неудачных проверок подряд: {channel_failure_counts[channel_url]}/{MAX_FAILED_CHECKS}.")
-            elif channel_removed_in_run: # Лог для случая, когда канал удален
-                pass # Уже залогировано выше
+            elif channel_removed_in_run:
+                pass
 
-        if no_more_pages_in_run: # Проверяем флаг "Больше страниц не найдено"
+        if no_more_pages_in_run:
             if channel_url in no_more_pages_counts:
                 no_more_pages_counts[channel_url] += 1
             else:
@@ -310,12 +306,12 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
 
             if no_more_pages_counts[channel_url] >= MAX_NO_MORE_PAGES_COUNT and channel_url not in channels_to_remove:
                 channels_to_remove.append(channel_url)
-                channel_removed_in_run = True # Помечаем, что канал был добавлен на удаление в этом проходе
+                channel_removed_in_run = True
                 logging.info(f"Канал '{channel_url}' будет удален из списка за {MAX_NO_MORE_PAGES_COUNT} последовательных сообщений 'Больше страниц не найдено'. Канал вероятно неактивен.")
             elif no_more_pages_in_run and not channel_removed_in_run:
-                 logging.info(f"Для канала '{channel_url}' зафиксировано сообщение 'Больше страниц не найдено'. Сообщений подряд: {no_more_pages_counts[channel_url]}/{MAX_NO_MORE_PAGES_COUNT}.")
+                logging.info(f"Для канала '{channel_url}' зафиксировано сообщение 'Больше страниц не найдено'. Сообщений подряд: {no_more_pages_counts[channel_url]}/{MAX_NO_MORE_PAGES_COUNT}.")
             elif channel_removed_in_run:
-                pass # Уже залогировано выше
+                pass
 
         parsed_profiles.extend(channel_profiles)
 
@@ -326,7 +322,6 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
 
 def clean_profile(profile_string):
     """Очищает строку профиля от лишних символов и артефактов."""
-    part = profile_string
     part = profile_string
     part = re.sub('%0A', '', part)
     part = re.sub('%250A', '', part)
@@ -344,8 +339,6 @@ async def process_parsed_profiles(parsed_profiles_list):
     """
     Обрабатывает список спарсенных профилей: очистка, фильтрация по протоколам,
     удаление дубликатов и подстрок, фильтрация по свежести, итоговая сортировка.
-
-    ... (описание функции осталось без изменений) ...
     """
     processed_profiles = []
 
@@ -353,7 +346,7 @@ async def process_parsed_profiles(parsed_profiles_list):
         cleaned_profile_string = clean_profile(item['profile'])
         protocol = ""
         profile_to_add = None
-        country_flag_emoji = STATIC_PROFILE_FLAG # Используем статичный флаг
+        country_flag_emoji = STATIC_PROFILE_FLAG  # Используем статичный флаг
 
         params_str = cleaned_profile_string.split("://")[1]
         if "@" in params_str:
@@ -362,7 +355,7 @@ async def process_parsed_profiles(parsed_profiles_list):
             params_str = params_str.split("#")[0]
         params = urllib_parse.parse_qs(params_str)
 
-        security_info = "NoTLS" # Default value
+        security_info = "NoTLS"  # Default value
         if params.get("security", [""])[0] == "tls":
             security_info = "TLS"
 
@@ -370,25 +363,45 @@ async def process_parsed_profiles(parsed_profiles_list):
             protocol = "vless"
             part = f'vless://{cleaned_profile_string.split("vless://")[1]}'
             if "flow=xtls-rprx-direct" not in part and "@" in part and ":" in part[8:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Используем новый эмодзи и security info
-
+                profile_to_add = {
+                    'profile': part.strip(),
+                    'score': item['score'],
+                    'date': item['date'],
+                    'country_flag_emoji': country_flag_emoji,
+                    'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                }
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
             part = f'hy2://{cleaned_profile_string.split("hy2://")[1]}'
             if "@" in part and ":" in part[6:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Security info
-
+                profile_to_add = {
+                    'profile': part.strip(),
+                    'score': item['score'],
+                    'date': item['date'],
+                    'country_flag_emoji': country_flag_emoji,
+                    'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                }
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
             part = f'tuic://{cleaned_profile_string.split("tuic://")[1]}'
-            profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC) {country_flag_emoji}"} # Indicate QUIC
-
+            profile_to_add = {
+                'profile': part.strip(),
+                'score': item['score'],
+                'date': item['date'],
+                'country_flag_emoji': country_flag_emoji,
+                'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC) {country_flag_emoji}"
+            }
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
             part = f'trojan://{cleaned_profile_string.split("trojan://")[1]}'
             if "@" in part and ":" in part[9:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Security info
-
+                profile_to_add = {
+                    'profile': part.strip(),
+                    'score': item['score'],
+                    'date': item['date'],
+                    'country_flag_emoji': country_flag_emoji,
+                    'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                }
         if profile_to_add:
             processed_profiles.append(profile_to_add)
 
@@ -398,7 +411,7 @@ async def process_parsed_profiles(parsed_profiles_list):
     seen_profiles = set()
     for profile_data in processed_profiles:
         profile = profile_data['profile']
-        if profile not in seen_profiles and (len(profile)>13) and (("…" in profile and "#" in profile) or ("…" not in profile)):
+        if profile not in seen_profiles and (len(profile) > 13) and (("…" in profile and "#" in profile) or ("…" not in profile)):
             unique_profiles_scored.append(profile_data)
             seen_profiles.add(profile)
 
@@ -407,11 +420,16 @@ async def process_parsed_profiles(parsed_profiles_list):
         x = profile_data['profile']
         x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip()
         if x[-2:-1] == '%':
-            x=x[:-2]
-        new_processed_profiles_scored.append({'profile': x.strip(), 'score': profile_data['score'], 'date': profile_data['date'], 'country_flag_emoji': profile_data['country_flag_emoji'], 'profile_name': profile_data['profile_name']}) # Keep profile name and flag emoji
+            x = x[:-2]
+        new_processed_profiles_scored.append({
+            'profile': x.strip(),
+            'score': profile_data['score'],
+            'date': profile_data['date'],
+            'country_flag_emoji': profile_data['country_flag_emoji'],
+            'profile_name': profile_data['profile_name']
+        })
 
     processed_profiles_scored = new_processed_profiles_scored
-
     processed_profiles_strings = [item['profile'] for item in processed_profiles_scored]
     processed_profiles_strings = substring_del(processed_profiles_strings)
 
@@ -424,31 +442,30 @@ async def process_parsed_profiles(parsed_profiles_list):
 
     # --- Фильтрация по свежести ---
     fresh_profiles_scored = []
-    now = datetime.now(tz=timezone.utc) # Timezone aware current datetime
+    now = datetime.now(tz=timezone.utc)
     for profile_data in final_profiles_scored:
         if 'date' in profile_data and isinstance(profile_data['date'], datetime):
             time_difference = now - profile_data['date']
             if time_difference <= timedelta(days=PROFILE_FRESHNESS_DAYS):
                 fresh_profiles_scored.append(profile_data)
             else:
-                logging.info(f"Удален устаревший профиль (старше {PROFILE_FRESHNESS_DAYS} дней): дата {profile_data['date'].strftime('%Y-%m-%d %H:%M:%S UTC')}, профиль: {profile_data['profile'][:100]}...") # Лог об удалении
+                logging.info(f"Удален устаревший профиль (старше {PROFILE_FRESHNESS_DAYS} дней): дата {profile_data['date'].strftime('%Y-%m-%d %H:%M:%S UTC')}, профиль: {profile_data['profile'][:100]}...")
         else:
-            fresh_profiles_scored.append(profile_data) # Оставляем профили без даты (если не удалось извлечь) и логируем это, чтобы не потерять их полностью, но можно пересмотреть это решение
+            fresh_profiles_scored.append(profile_data)
 
     final_profiles_scored = fresh_profiles_scored
-    logging.info(f"После фильтрации по свежести осталось {len(final_profiles_scored)} профилей.") # Лог о количестве профилей после фильтрации
+    logging.info(f"После фильтрации по свежести осталось {len(final_profiles_scored)} профилей.")
 
-    # Исправление: Обработка NoneType при сортировке
-    final_profiles_scored.sort(key=lambda item: item.get('score', 0) if item and isinstance(item, dict) else 0, reverse=True)
-
+    # Исправленная сортировка: если score равен None, используется 0
+    final_profiles_scored.sort(key=lambda item: item.get('score') or 0, reverse=True)
     return final_profiles_scored
 
 def load_failure_history():
     """Загружает историю неудачных проверок каналов из файла."""
     if not os.path.exists(FAILURE_HISTORY_FILE):
         logging.info(f"Файл {FAILURE_HISTORY_FILE} не найден при первом запуске. Создаем пустой файл.")
-        json_save({}, FAILURE_HISTORY_FILE) # Создаем пустой JSON файл
-        return {} # Возвращаем пустой словарь
+        json_save({}, FAILURE_HISTORY_FILE)
+        return {}
     history = json_load(FAILURE_HISTORY_FILE)
     return history if history else {}
 
@@ -460,8 +477,8 @@ def load_no_more_pages_history():
     """Загружает историю 'Больше страниц не найдено' для каналов из файла."""
     if not os.path.exists(NO_MORE_PAGES_HISTORY_FILE):
         logging.info(f"Файл {NO_MORE_PAGES_HISTORY_FILE} не найден при первом запуске. Создаем пустой файл.")
-        json_save({}, NO_MORE_PAGES_HISTORY_FILE) # Создаем пустой JSON файл
-        return {} # Возвращаем пустой словарь
+        json_save({}, NO_MORE_PAGES_HISTORY_FILE)
+        return {}
     history = json_load(NO_MORE_PAGES_HISTORY_FILE)
     return history if history else {}
 
@@ -469,28 +486,25 @@ def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
     return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
 
-
 if __name__ == "__main__":
 
-    telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
+    telegram_channel_names_original = json_load('telegram_channels.json')
     if telegram_channel_names_original is None:
         logging.critical("Не удалось загрузить список каналов из telegram_channels.json. Завершение работы.")
         exit(1)
 
-    # ... (остальной код main функции без изменений, кроме удаления блока с tempfile.TemporaryDirectory) ...
-    telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5] # Убедимся, что имена каналов валидны после загрузки
-    telegram_channel_names_original = list(set(telegram_channel_names_original)) # Удаляем дубликаты
-    telegram_channel_names_original.sort() # Сортируем каналы
+    telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5]
+    telegram_channel_names_original = list(set(telegram_channel_names_original))
+    telegram_channel_names_original.sort()
 
     initial_channels_count = len(telegram_channel_names_original)
     logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
 
-    channel_failure_counts = load_failure_history() # Загрузка истории неудач
-    no_more_pages_counts = load_no_more_pages_history() # Загрузка истории "Больше страниц не найдено"
-    channels_to_remove = [] # Список каналов на удаление в этом прогоне
+    channel_failure_counts = load_failure_history()
+    no_more_pages_counts = load_no_more_pages_history()
+    channels_to_remove = []
 
-    # Создаем копию списка каналов для итерации, чтобы можно было удалять из оригинала
-    telegram_channel_names_to_parse = list(telegram_channel_names_original) # Работаем с копией списка каналов
+    telegram_channel_names_to_parse = list(telegram_channel_names_original)
     channels_parsed_count = len(telegram_channel_names_to_parse)
 
     logging.info(f'Начинаем парсинг...')
@@ -502,10 +516,13 @@ if __name__ == "__main__":
 
     logging.info(f'Начинаем парсинг {channels_parsed_count} телеграм каналов из telegram_channels.json...')
 
-    async def main(): # Определяем асинхронную функцию main
+    async def main():
         threads = []
-        for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
-            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts))) # Запускаем асинхронную функцию process_channel в отдельном потоке
+        for channel_name in telegram_channel_names_to_parse:
+            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(
+                process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original,
+                                channels_parsed_count, channels_with_profiles, channel_failure_counts,
+                                channels_to_remove, no_more_pages_counts)))
             threads.append(thread)
             thread.start()
 
@@ -515,20 +532,18 @@ if __name__ == "__main__":
         logging.info(f'Парсинг завершен - {str(datetime.now() - start_time).split(".")[0]}')
         logging.info(f'Начинаем обработку и фильтрацию спарсенных конфигов...')
 
-        final_profiles_scored = await process_parsed_profiles(parsed_profiles) # process_parsed_profiles теперь фильтрует по свежести и асинхронная
-
+        final_profiles_scored = await process_parsed_profiles(parsed_profiles)
         num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
         profiles_to_save = final_profiles_scored[:num_profiles_to_save]
 
         with open("config-tg.txt", "w", encoding="utf-8") as file:
             for profile_data in profiles_to_save:
-                file.write(f"{profile_data['profile_name']} - {profile_data['profile'].encode('utf-8').decode('utf-8')}\n") # Save profile name and profile
+                file.write(f"{profile_data['profile_name']} - {profile_data['profile'].encode('utf-8').decode('utf-8')}\n")
 
-        # Удаление каналов из telegram_channel_names_original и сохранение в файл
         if channels_to_remove:
             logging.info(f"Удаляем каналы: {channels_to_remove}")
             telegram_channel_names_updated = [chan for chan in telegram_channel_names_original if chan not in channels_to_remove]
-            if telegram_channel_names_updated != telegram_channel_names_original: # Проверка на изменения перед сохранением
+            if telegram_channel_names_updated != telegram_channel_names_original:
                 json_save(telegram_channel_names_updated, 'telegram_channels.json')
                 logging.info(f"Обновленный список каналов сохранен в telegram_channels.json. Удалено каналов: {len(channels_to_remove)}.")
             else:
@@ -536,10 +551,10 @@ if __name__ == "__main__":
         else:
             logging.info("Нет каналов для удаления.")
 
-        save_failure_history(channel_failure_counts) # Сохранение истории неудач
-        save_no_more_pages_history(no_more_pages_counts) # Сохранение истории "Больше страниц не найдено"
+        save_failure_history(channel_failure_counts)
+        save_no_more_pages_history(no_more_pages_counts)
 
-    asyncio.run(main()) # Запускаем асинхронную функцию main
+    asyncio.run(main())
 
     end_time = datetime.now()
     total_time = end_time - start_time
