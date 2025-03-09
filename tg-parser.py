@@ -210,7 +210,7 @@ async def get_country_flag_emoji(ip_address: str, db_path: str) -> str:
     """
     try:
         loop = asyncio.get_running_loop() # Получаем текущий event loop
-        with geoip2.database.Reader(db_path, loop=loop) as reader: # Открываем базу данных GeoLite2 с asyncio loop
+        with geoip2.database.Reader(db_path) as reader: # Открываем базу данных GeoLite2 БЕЗ asyncio loop  <--- ИЗМЕНЕНИЕ ЗДЕСЬ!
             def blocking_lookup(): # Функция для блокирующего вызова в отдельном потоке
                 try:
                     response = reader.country(ip_address) # Выполняем поиск страны
@@ -659,7 +659,7 @@ if __name__ == "__main__":
     logging.info(f'Каналов обработано: {channels_parsed_count}')
     logging.info(f'Каналов, в которых найдены профили: {len(channels_with_profiles)}')
     logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
-    logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}') # Количество уникальных профилей уже после фильтрации по свежести
+    logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
     logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
     if channels_to_remove:
         logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
