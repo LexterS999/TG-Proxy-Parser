@@ -10,9 +10,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
-import geoip2.database
-import geoip2.errors
-import asyncio.exceptions
 import zipfile
 import tarfile
 from typing import Dict
@@ -54,10 +51,7 @@ NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json' # Файл для хр
 MAX_NO_MORE_PAGES_COUNT = 4 # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
 PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в днях (от момента запуска скрипта)
 
-# --- Константы для MaxMind GeoLite2 ---
-MAXMIND_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.07/GeoLite2-Country.mmdb"
-# --- Конец констант для MaxMind GeoLite2 ---
-
+# --- Константы для флагов и эмодзи ---
 COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответствия кодов стран и эмодзи флагов (ISO 3166-1 alpha-2)
     "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "FR": "🇫🇷", "JP": "🇯🇵",
     "CN": "🇨🇳", "RU": "🇷🇺", "KR": "🇰🇷", "SG": "🇸🇬", "CA": "🇨🇦",
@@ -74,6 +68,12 @@ COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответс
 }
 DEFAULT_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["GLOBAL"] # Emoji for unknown country
 UNKNOWN_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["UNKNOWN"] # Emoji for when country can't be determined
+STATIC_PROFILE_FLAG = DEFAULT_FLAG_EMOJI # Статичный флаг для профилей, т.к. GeoLite удален
+
+VLESS_EMOJI = "🌠" # ✨ # Другой красивый эмодзи для VLESS (🌠 - shooting star, ✨ - sparkles)
+HY2_EMOJI = "⚡"
+TUIC_EMOJI = "🚀"
+TROJAN_EMOJI = "🛡️"
 
 # --- Конец глобальных констант ---
 
@@ -197,52 +197,7 @@ def calculate_profile_score(profile):
         logging.error(f"Ошибка при расчете скора профиля '{profile}': {e}")
         return 0
 
-async def get_country_flag_emoji(ip_address: str, db_path: str) -> str:
-    """
-    Асинхронно определяет страну по IP-адресу и возвращает эмодзи флага, используя MaxMind GeoLite2.
-
-    Аргументы:
-        ip_address: IP-адрес сервера.
-        db_path: Путь к базе данных MaxMind GeoLite2 (.mmdb файл).
-
-    Возвращает:
-        str: Эмодзи флага страны или DEFAULT_FLAG_EMOJI, если страна не определена или произошла ошибка.
-    """
-    try:
-        if not os.path.exists(db_path): # Проверяем, существует ли файл БД перед открытием
-            raise FileNotFoundError(f"Файл базы данных GeoLite2 не найден по пути: '{db_path}'. Пожалуйста, скачайте и поместите его в указанное место.")
-
-        loop = asyncio.get_running_loop() # Получаем текущий event loop
-        with geoip2.database.Reader(db_path) as reader: # Открываем базу данных GeoLite2 БЕЗ asyncio loop
-            def blocking_lookup(): # Функция для блокирующего вызова в отдельном потоке
-                try:
-                    response = reader.country(ip_address) # Выполняем поиск страны
-                    country_code = response.country.iso_code # Получаем ISO код страны
-                    if country_code:
-                        return country_code
-                except geoip2.errors.AddressNotFoundError: # Обрабатываем случай, когда IP не найден в базе
-                    logging.warning(f"IP-адрес '{ip_address}' не найден в базе данных GeoLite2.")
-                    return None # Возвращаем None, если IP не найден
-                except Exception as e:
-                    logging.warning(f"Ошибка GeoLite2 для IP '{ip_address}': {e}")
-                    return None # Возвращаем None в случае ошибки GeoLite2
-                return None # Возвращаем None, если код страны не получен
-
-            country_code = await asyncio.to_thread(blocking_lookup) # Запускаем блокирующий вызов в пуле потоков
-
-            if country_code and country_code in COUNTRY_CODE_TO_FLAG_EMOJI:
-                return COUNTRY_CODE_TO_FLAG_EMOJI[country_code]
-            else:
-                return DEFAULT_FLAG_EMOJI # Используем default flag если код страны не найден в словаре или lookup вернул None
-
-    except FileNotFoundError as e: # Обработка случая, когда файл базы данных не найден
-        logging.error(str(e)) # Используем сообщение исключения, которое мы сгенерировали выше
-        return UNKNOWN_FLAG_EMOJI # Используем unknown flag emoji в случае ошибки
-    except Exception as e: # Ловим любые другие ошибки, включая ошибки открытия и т.д.
-        logging.error(f"Критическая ошибка при определении страны для IP '{ip_address}' (GeoLite2): {e}")
-        return UNKNOWN_FLAG_EMOJI # Используем unknown flag emoji в случае крит. ошибки
-
-async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, maxmind_db_path):
+async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts):
     """
     Обрабатывает один телеграм канал для извлечения профилей.
 
@@ -258,7 +213,6 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
         htmltag_pattern = re.compile(r'<.*?>')
         pattern_datbef = re.compile(r'(?:data-before=")(\d*)')
         no_more_pages_in_run = False # Флаг, чтобы отслеживать "Больше страниц не найдено" в текущем проходе
-        country_flag_emoji_tasks = [] # Список для хранения асинхронных задач определения страны
 
         for attempt in range(2):
             while True:
@@ -324,13 +278,7 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
                                 if f"{protocol}://" in cleaned_content:
                                     profile_link = cleaned_content
                                     score = calculate_profile_score(profile_link)
-                                    host_match = re.search(r"@([\w\.\-]+):", profile_link) # Extract host before port
-                                    ip_address = host_match.group(1) if host_match else None # Get IP address
-                                    country_flag_emoji_task = asyncio.create_task(get_country_flag_emoji(ip_address, maxmind_db_path)) if ip_address else asyncio.Future() # Start async task, or create a dummy future if no IP
-                                    if not ip_address:
-                                        country_flag_emoji_task.set_result(DEFAULT_FLAG_EMOJI) # If no IP, set default emoji immediately
-                                    country_flag_emoji_tasks.append(country_flag_emoji_task) # Add task to list
-                                    channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime, 'country_flag_emoji_task': country_flag_emoji_task}) # Сохраняем задачу
+                                    channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
 
                                     god_tg_name = True
                                     break
@@ -400,50 +348,46 @@ async def process_parsed_profiles(parsed_profiles_list):
     ... (описание функции осталось без изменений) ...
     """
     processed_profiles = []
-    country_flag_emojis = await asyncio.gather(*(item['country_flag_emoji_task'] for item in parsed_profiles_list if 'country_flag_emoji_task' in item), return_exceptions=True) # Получаем результаты асинхронных задач
 
-    for index, item in enumerate(parsed_profiles_list):
+    for item in parsed_profiles_list:
         cleaned_profile_string = clean_profile(item['profile'])
         protocol = ""
         profile_to_add = None
+        country_flag_emoji = STATIC_PROFILE_FLAG # Используем статичный флаг
 
-        country_flag_emoji = None # Default value if no task or error
-        if 'country_flag_emoji_task' in item:
-            emoji_result = country_flag_emojis[index] # Get corresponding emoji result
-            if isinstance(emoji_result, Exception): # Handle exceptions from tasks
-                logging.warning(f"Ошибка при получении флага страны для профиля '{item['profile'][:50]}...': {emoji_result}")
-                country_flag_emoji = UNKNOWN_FLAG_EMOJI # Use unknown flag emoji on error
-            else:
-                country_flag_emoji = emoji_result
-        else:
-            country_flag_emoji = DEFAULT_FLAG_EMOJI # Default if no country task
+        params_str = cleaned_profile_string.split("://")[1]
+        if "@" in params_str:
+            params_str = params_str.split("@")[1]
+        if "#" in params_str:
+            params_str = params_str.split("#")[0]
+        params = urllib_parse.parse_qs(params_str)
 
-        port_match = re.search(r":(\d+)", cleaned_profile_string) # Find port number
-        port = port_match.group(1) if port_match else "unknown_port" # Extract port or use "unknown_port"
+        security_info = "NoTLS" # Default value
+        if params.get("security", [""])[0] == "tls":
+            security_info = "TLS"
 
         if "vless://" in cleaned_profile_string:
             protocol = "vless"
             part = f'vless://{cleaned_profile_string.split("vless://")[1]}'
             if "flow=xtls-rprx-direct" not in part and "@" in part and ":" in part[8:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{protocol}-{port}-{country_flag_emoji}"} # Add flag emoji and profile name
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Используем новый эмодзи и security info
 
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
             part = f'hy2://{cleaned_profile_string.split("hy2://")[1]}'
             if "@" in part and ":" in part[6:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{protocol}-{port}-{country_flag_emoji}"} # Add flag emoji and profile name
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Security info
 
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
             part = f'tuic://{cleaned_profile_string.split("tuic://")[1]}'
-            if ":" in part[7:] and "@" in part:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{protocol}-{port}-{country_flag_emoji}"} # Add flag emoji and profile name
+            profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC) {country_flag_emoji}"} # Indicate QUIC
 
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
             part = f'trojan://{cleaned_profile_string.split("trojan://")[1]}'
             if "@" in part and ":" in part[9:]:
-                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{protocol}-{port}-{country_flag_emoji}"} # Add flag emoji and profile name
+                profile_to_add = {'profile': part.strip(), 'score': item['score'], 'date': item['date'], 'country_flag_emoji': country_flag_emoji, 'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"} # Security info
 
         if profile_to_add:
             processed_profiles.append(profile_to_add)
@@ -513,63 +457,10 @@ def load_no_more_pages_history():
 
 def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
-    return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
-
-def download_maxmind_db(db_url, db_path):
-    """
-    Загружает базу данных MaxMind GeoLite2 Country MMDB.
-
-    Аргументы:
-        db_url: URL для скачивания ZIP-архива базы данных.
-        db_path: Путь для сохранения файла базы данных (MMDB).
-    """
-    logging.info(f"Загрузка базы данных MaxMind GeoLite2 Country...")
-    db_dir = os.path.dirname(db_path) # Получаем директорию из пути к БД
-    if not os.path.exists(db_dir): # Проверяем, существует ли директория
-        os.makedirs(db_dir, exist_ok=True) # Создаем директорию, если не существует
-
-    try:
-        response = requests.get(db_url, stream=True, timeout=30) # Увеличиваем таймаут для скачивания
-        response.raise_for_status() # Проверка на ошибки HTTP
-
-        tar_gz_path = "maxmind_temp.tar.gz" # Временный файл для tar.gz архива
-        with open(tar_gz_path, "wb") as tar_gz_file:
-            for chunk in response.iter_content(chunk_size=8192): # Скачиваем по частям
-                tar_gz_file.write(chunk)
-
-        with tarfile.open(tar_gz_path, "r:gz") as tar_ref: # Открываем tar.gz архив
-            for member in tar_ref.getmembers(): # Ищем MMDB файл в архиве (может быть в подпапке)
-                if member.name.endswith(".mmdb"):
-                    tar_ref.extract(member, db_dir) # Извлекаем в директорию db_dir
-                    extracted_path = os.path.join(db_dir, member.name) # Полный путь к извлеченному файлу
-                    os.rename(extracted_path, db_path) # Переименовываем в db_path
-                    break # Нашли и извлекли, выходим из цикла
-            else: # for...else, выполнится если MMDB файл не найден в архиве
-                raise FileNotFoundError("MMDB файл не найден в tar.gz архиве.")
-
-        os.remove(tar_gz_path) # Удаляем временный tar.gz файл
-        logging.info(f"База данных MaxMind GeoLite2 успешно загружена и сохранена в '{db_path}'.")
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при скачивании базы данных MaxMind GeoLite2: {e}")
-    except tarfile.ReadError:
-        logging.error(f"Ошибка: Поврежденный tar.gz архив базы данных MaxMind GeoLite2.")
-        if os.path.exists(tar_gz_path): # Пытаемся удалить поврежденный архив, если он есть
-            os.remove(tar_gz_path)
-    except FileNotFoundError as e:
-        logging.error(f"Ошибка: {e}")
-    except Exception as e: # Ловим все остальные исключения
-        logging.error(f"Непредвиденная ошибка при загрузке и обработке базы данных MaxMind GeoLite2: {e}")
+    return json_save(history, NO_MORE_pages_HISTORY_FILE)
 
 
 if __name__ == "__main__":
-    # Определяем постоянный путь к базе данных в поддиректории 'db'
-    script_dir = os.path.dirname(os.path.abspath(__file__)) # Получаем директорию скрипта
-    db_dir = os.path.join(script_dir, 'db') # Директория для БД
-    maxmind_db_path = os.path.join(db_dir, "GeoLite2-Country.mmdb") # Полный путь к файлу БД
-
-    # Скачиваем базу данных в постоянную директорию
-    download_maxmind_db(MAXMIND_DB_URL, maxmind_db_path)
 
     telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
     if telegram_channel_names_original is None:
@@ -604,7 +495,7 @@ if __name__ == "__main__":
     async def main(): # Определяем асинхронную функцию main
         threads = []
         for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
-            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, maxmind_db_path))) # Запускаем асинхронную функцию process_channel в отдельном потоке
+            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts))) # Запускаем асинхронную функцию process_channel в отдельном потоке
             threads.append(thread)
             thread.start()
 
