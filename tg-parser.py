@@ -575,94 +575,99 @@ def download_maxmind_db(db_url, db_path):
 
 
 if __name__ == "__main__":
-    if not os.path.exists(MAXMIND_DB_PATH): # Проверяем наличие базы данных MaxMind GeoLite2
-        download_maxmind_db(MAXMIND_DB_URL, MAXMIND_DB_PATH) # Скачиваем, если нет
+    # Создаем временную директорию
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Определяем путь к базе данных во временной директории
+        maxmind_db_path = os.path.join(temp_dir, "GeoLite2-Country.mmdb")
 
-    telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
-    if telegram_channel_names_original is None:
-        logging.critical("Не удалось загрузить список каналов из telegram_channels.json. Завершение работы.")
-        exit(1)
+        # Скачиваем базу данных во временную директорию
+        download_maxmind_db(MAXMIND_DB_URL, maxmind_db_path)
 
-    # Фильтрация и удаление каналов с некорректными именами до начала обработки
-    telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5] # Убедимся, что имена каналов валидны после загрузки
-    telegram_channel_names_original = list(set(telegram_channel_names_original)) # Удаляем дубликаты
-    telegram_channel_names_original.sort() # Сортируем каналы
+        telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
+        if telegram_channel_names_original is None:
+            logging.critical("Не удалось загрузить список каналов из telegram_channels.json. Завершение работы.")
+            exit(1)
 
-    initial_channels_count = len(telegram_channel_names_original)
-    logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
+        # Фильтрация и удаление каналов с некорректными именами до начала обработки
+        telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5] # Убедимся, что имена каналов валидны после загрузки
+        telegram_channel_names_original = list(set(telegram_channel_names_original)) # Удаляем дубликаты
+        telegram_channel_names_original.sort() # Сортируем каналы
 
-    channel_failure_counts = load_failure_history() # Загрузка истории неудач
-    no_more_pages_counts = load_no_more_pages_history() # Загрузка истории "Больше страниц не найдено"
-    channels_to_remove = [] # Список каналов на удаление в этом прогоне
+        initial_channels_count = len(telegram_channel_names_original)
+        logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
 
-    # Создаем копию списка каналов для итерации, чтобы можно было удалять из оригинала
-    telegram_channel_names_to_parse = list(telegram_channel_names_original) # Работаем с копией списка каналов
-    channels_parsed_count = len(telegram_channel_names_to_parse)
+        channel_failure_counts = load_failure_history() # Загрузка истории неудач
+        no_more_pages_counts = load_no_more_pages_history() # Загрузка истории "Больше страниц не найдено"
+        channels_to_remove = [] # Список каналов на удаление в этом прогоне
 
-    logging.info(f'Начинаем парсинг...')
-    start_time = datetime.now()
+        # Создаем копию списка каналов для итерации, чтобы можно было удалять из оригинала
+        telegram_channel_names_to_parse = list(telegram_channel_names_original) # Работаем с копией списка каналов
+        channels_parsed_count = len(telegram_channel_names_to_parse)
 
-    thread_semaphore = threading.Semaphore(MAX_THREADS_PARSING)
-    parsed_profiles = []
-    channels_with_profiles = set()
+        logging.info(f'Начинаем парсинг...')
+        start_time = datetime.now()
 
-    logging.info(f'Начинаем парсинг {channels_parsed_count} телеграм каналов из telegram_channels.json...')
+        thread_semaphore = threading.Semaphore(MAX_THREADS_PARSING)
+        parsed_profiles = []
+        channels_with_profiles = set()
 
-    async def main(): # Определяем асинхронную функцию main
-        threads = []
-        for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
-            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, MAXMIND_DB_PATH))) # Запускаем асинхронную функцию process_channel в отдельном потоке
-            threads.append(thread)
-            thread.start()
+        logging.info(f'Начинаем парсинг {channels_parsed_count} телеграм каналов из telegram_channels.json...')
 
-        for thread in threads:
-            thread.join()
+        async def main(): # Определяем асинхронную функцию main
+            threads = []
+            for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
+                thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, maxmind_db_path))) # Запускаем асинхронную функцию process_channel в отдельном потоке
+                threads.append(thread)
+                thread.start()
 
-        logging.info(f'Парсинг завершен - {str(datetime.now() - start_time).split(".")[0]}')
-        logging.info(f'Начинаем обработку и фильтрацию спарсенных конфигов...')
+            for thread in threads:
+                thread.join()
 
-        final_profiles_scored = await process_parsed_profiles(parsed_profiles) # process_parsed_profiles теперь фильтрует по свежести и асинхронная
+            logging.info(f'Парсинг завершен - {str(datetime.now() - start_time).split(".")[0]}')
+            logging.info(f'Начинаем обработку и фильтрацию спарсенных конфигов...')
 
-        num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
-        profiles_to_save = final_profiles_scored[:num_profiles_to_save]
+            final_profiles_scored = await process_parsed_profiles(parsed_profiles) # process_parsed_profiles теперь фильтрует по свежести и асинхронная
 
-        with open("config-tg.txt", "w", encoding="utf-8") as file:
-            for profile_data in profiles_to_save:
-                file.write(f"{profile_data['profile_name']} - {profile_data['profile'].encode('utf-8').decode('utf-8')}\n") # Save profile name and profile
+            num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
+            profiles_to_save = final_profiles_scored[:num_profiles_to_save]
 
-        # Удаление каналов из telegram_channel_names_original и сохранение в файл
-        if channels_to_remove:
-            logging.info(f"Удаляем каналы: {channels_to_remove}")
-            telegram_channel_names_updated = [chan for chan in telegram_channel_names_original if chan not in channels_to_remove]
-            if telegram_channel_names_updated != telegram_channel_names_original: # Проверка на изменения перед сохранением
-                json_save(telegram_channel_names_updated, 'telegram_channels.json')
-                logging.info(f"Обновленный список каналов сохранен в telegram_channels.json. Удалено каналов: {len(channels_to_remove)}.")
+            with open("config-tg.txt", "w", encoding="utf-8") as file:
+                for profile_data in profiles_to_save:
+                    file.write(f"{profile_data['profile_name']} - {profile_data['profile'].encode('utf-8').decode('utf-8')}\n") # Save profile name and profile
+
+            # Удаление каналов из telegram_channel_names_original и сохранение в файл
+            if channels_to_remove:
+                logging.info(f"Удаляем каналы: {channels_to_remove}")
+                telegram_channel_names_updated = [chan for chan in telegram_channel_names_original if chan not in channels_to_remove]
+                if telegram_channel_names_updated != telegram_channel_names_original: # Проверка на изменения перед сохранением
+                    json_save(telegram_channel_names_updated, 'telegram_channels.json')
+                    logging.info(f"Обновленный список каналов сохранен в telegram_channels.json. Удалено каналов: {len(channels_to_remove)}.")
+                else:
+                    logging.info("Список каналов в telegram_channels.json не изменился (удаление не потребовалось).")
             else:
-                logging.info("Список каналов в telegram_channels.json не изменился (удаление не потребовалось).")
+                logging.info("Нет каналов для удаления.")
+
+            save_failure_history(channel_failure_counts) # Сохранение истории неудач
+            save_no_more_pages_history(no_more_pages_counts) # Сохранение истории "Больше страниц не найдено"
+
+        asyncio.run(main()) # Запускаем асинхронную функцию main
+
+        end_time = datetime.now()
+        total_time = end_time - start_time
+
+        logging.info(f'{"-"*40}')
+        logging.info(f'{"--- Итоговая статистика ---":^40}')
+        logging.info(f'{"-"*40}')
+        logging.info(f'Общее время выполнения: {str(total_time).split(".")[0]}')
+        logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
+        logging.info(f'Каналов обработано: {channels_parsed_count}')
+        logging.info(f'Каналов, в которых найдены профили: {len(channels_with_profiles)}')
+        logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
+        logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
+        logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
+        if channels_to_remove:
+            logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
         else:
-            logging.info("Нет каналов для удаления.")
-
-        save_failure_history(channel_failure_counts) # Сохранение истории неудач
-        save_no_more_pages_history(no_more_pages_counts) # Сохранение истории "Больше страниц не найдено"
-
-    asyncio.run(main()) # Запускаем асинхронную функцию main
-
-    end_time = datetime.now()
-    total_time = end_time - start_time
-
-    logging.info(f'{"-"*40}')
-    logging.info(f'{"--- Итоговая статистика ---":^40}')
-    logging.info(f'{"-"*40}')
-    logging.info(f'Общее время выполнения: {str(total_time).split(".")[0]}')
-    logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
-    logging.info(f'Каналов обработано: {channels_parsed_count}')
-    logging.info(f'Каналов, в которых найдены профили: {len(channels_with_profiles)}')
-    logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
-    logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
-    logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
-    if channels_to_remove:
-        logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
-    else:
-        logging.info(f'Каналов удалено из списка: 0')
-    logging.info(f'{"-"*40}')
-    logging.info('Завершено!')
+            logging.info(f'Каналов удалено из списка: 0')
+        logging.info(f'{"-"*40}')
+        logging.info('Завершено!')
