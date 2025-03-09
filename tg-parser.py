@@ -16,6 +16,8 @@ import asyncio.exceptions
 import zipfile
 import tarfile
 from typing import Dict
+import tempfile
+import shutil
 
 # --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,7 +56,6 @@ PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в �
 
 # --- Константы для MaxMind GeoLite2 ---
 MAXMIND_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.07/GeoLite2-Country.mmdb"
-MAXMIND_DB_PATH = "GeoLite2-Country.mmdb"
 # --- Конец констант для MaxMind GeoLite2 ---
 
 COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответствия кодов стран и эмодзи флагов (ISO 3166-1 alpha-2)
