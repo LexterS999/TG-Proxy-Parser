@@ -486,6 +486,8 @@ def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
     return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
 
+# ... (остальной код без изменений)
+
 if __name__ == "__main__":
 
     telegram_channel_names_original = json_load('telegram_channels.json')
@@ -554,7 +556,11 @@ if __name__ == "__main__":
         save_failure_history(channel_failure_counts)
         save_no_more_pages_history(no_more_pages_counts)
 
-    asyncio.run(main())
+        # Возвращаем результаты для дальнейшего логирования
+        return final_profiles_scored, profiles_to_save
+
+    # Присваиваем возвращенные значения переменным, чтобы они были доступны для итоговой статистики
+    final_profiles_scored, profiles_to_save = asyncio.run(main())
 
     end_time = datetime.now()
     total_time = end_time - start_time
@@ -575,3 +581,4 @@ if __name__ == "__main__":
         logging.info(f'Каналов удалено из списка: 0')
     logging.info(f'{"-"*40}')
     logging.info('Завершено!')
+
