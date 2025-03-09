@@ -10,11 +10,12 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
-import geoip2.database # Используем geoip2 вместо ip2location
-import geoip2.errors  # Импортируем для обработки исключений geoip2
+import geoip2
+import geoip2.database
+import geoip2.errors
 import asyncio.exceptions
 import zipfile
-import tarfile # Для работы с tar.gz архивами MaxMind
+import tarfile
 from typing import Dict
 
 # --- Настройка логирования ---
