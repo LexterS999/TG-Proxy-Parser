@@ -540,7 +540,8 @@ if __name__ == "__main__":
 
         with open("config-tg.txt", "w", encoding="utf-8") as file:
             for profile_data in profiles_to_save:
-                file.write(f"{profile_data['profile_name']} - {profile_data['profile'].encode('utf-8').decode('utf-8')}\n")
+        # Новый формат: сначала ссылка, затем пробел и наименование профиля
+        file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')} {profile_data['profile_name']}\n")
 
         if channels_to_remove:
             logging.info(f"Удаляем каналы: {channels_to_remove}")
