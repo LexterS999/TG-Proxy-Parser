@@ -1,4 +1,0 @@
-requests
-beautifulsoup4
-geoip2
-python-geoip2-geolite2
