@@ -42,8 +42,8 @@ PROFILE_SCORE_WEIGHTS = {
 MAX_FAILED_CHECKS = 4 # Новая константа: Максимальное количество неудачных проверок перед удалением канала
 FAILURE_HISTORY_FILE = 'channel_failure_history.json' # Файл для хранения истории неудач
 
-PROFILE_DOWNLOAD_START_DAY = 1 # День начала периода скачивания профилей
-PROFILE_DOWNLOAD_PERIOD_DAYS = 4 # Период в днях для скачивания профилей
+# PROFILE_DOWNLOAD_START_DAY = 1 # День начала периода скачивания профилей - УСТАРЕЛА
+# PROFILE_DOWNLOAD_PERIOD_DAYS = 7 # Период в днях для скачивания профилей - УСТАРЕЛА
 # --- Конец глобальных констант ---
 
 if not os.path.exists('config-tg.txt'):
@@ -395,16 +395,7 @@ if __name__ == "__main__":
     initial_channels_count = len(telegram_channel_names_original)
     logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
 
-    current_day = datetime.now().day
-    end_day_profile_download = PROFILE_DOWNLOAD_START_DAY + PROFILE_DOWNLOAD_PERIOD_DAYS - 1 # Вычисляем конечный день периода
-    if end_day_profile_download > 31: # Обработка перехода на следующий месяц (максимум 31 день в месяце)
-        end_day_profile_download = end_day_profile_download % 31
-    if PROFILE_DOWNLOAD_START_DAY <= current_day <= end_day_profile_download:
-        logging.info(f"Текущий день месяца ({current_day}) попадает в заданный период скачивания ({PROFILE_DOWNLOAD_START_DAY}-{end_day_profile_download}). Парсинг профилей будет выполнен.")
-    else:
-        logging.info(f"Текущий день месяца ({current_day}) не попадает в заданный период скачивания ({PROFILE_DOWNLOAD_START_DAY}-{end_day_profile_download}). Парсинг профилей отменен.")
-        logging.info(f'Завершено!')
-        exit()
+    # --- Удален блок проверки текущего дня месяца ---
 
     channel_failure_counts = load_failure_history() # Загрузка истории неудач
     channels_to_remove = [] # Список каналов на удаление в этом прогоне
