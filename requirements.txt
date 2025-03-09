@@ -1,0 +1,6 @@
+asyncio
+geoip2.database
+geoip2.errors
+asyncio.exceptions
+requests
+beautifulsoup4
