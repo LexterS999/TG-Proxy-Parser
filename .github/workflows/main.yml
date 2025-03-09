@@ -8,8 +8,7 @@ on:
 jobs:
   run-tg-parser:
     runs-on: ubuntu-latest
-    env: # Определяем переменные окружения на уровне задания
-      PYTHON_VERSION: '3.11' # Явно задаем версию Python как переменную окружения
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,21 +18,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }} # Используем переменную окружения PYTHON_VERSION
+          python-version: '3.11' # Используем Python 3.11
 
       - name: Install dependencies
-        id: install-deps-cache # Уникальный ID для шага кэширования
-        uses: actions/cache@v3
-        with:
-          path: ~/.pip/cache # Путь к кэшу pip
-          key: pip-cache-${{ runner.os }}-${{ env.PYTHON_VERSION }}-direct-deps-${{ hashString('requests beautifulsoup4 geoip2') }} # Ключ кэша, основанный на списке зависимостей
-          restore-keys: |
-            pip-cache-${{ runner.os }}-${{ env.PYTHON_VERSION }}-direct-deps- # Ключ для восстановления кэша (если точный ключ не найден)
-      - name: Install dependencies (если кэш не найден)
-        if: steps.install-deps-cache.outputs.cache-hit != 'true' # Выполнять только если кэш не был использован
         run: |
-         python -m pip install --upgrade pip
-         pip install requests beautifulsoup4 geoip2 # Прямая установка зависимостей
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 asyncio geoip2.database geoip2.errors
 
       - name: Run tg-parser.py
         run: python tg-parser.py
