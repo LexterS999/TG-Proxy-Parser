@@ -210,7 +210,7 @@ async def get_country_flag_emoji(ip_address: str, db_path: str) -> str:
     """
     try:
         loop = asyncio.get_running_loop() # Получаем текущий event loop
-        with geoip2.database.Reader(db_path) as reader: # Открываем базу данных GeoLite2 БЕЗ asyncio loop  <--- ИЗМЕНЕНИЕ ЗДЕСЬ!
+        with geoip2.database.Reader(db_path) as reader: # Открываем базу данных GeoLite2 БЕЗ asyncio loop
             def blocking_lookup(): # Функция для блокирующего вызова в отдельном потоке
                 try:
                     response = reader.country(ip_address) # Выполняем поиск страны
