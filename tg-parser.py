@@ -10,9 +10,11 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
-import ip2location
+import geoip2.database # Используем geoip2 вместо ip2location
+import geoip2.errors  # Импортируем для обработки исключений geoip2
 import asyncio.exceptions
 import zipfile
+import tarfile # Для работы с tar.gz архивами MaxMind
 from typing import Dict
 
 # --- Настройка логирования ---
@@ -50,8 +52,11 @@ NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json' # Файл для хр
 MAX_NO_MORE_PAGES_COUNT = 4 # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
 PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в днях (от момента запуска скрипта)
 
-IP2LOCATION_DB_URL = "https://download.ip2location.com/lite/IP2LOCATION-LITE-DB1.BIN.ZIP" # URL для скачивания IP2Location LITE DB1
-IP2LOCATION_DB_PATH = "IP2LOCATION-LITE-DB1.BIN" # Путь к файлу базы данных IP2Location
+# --- Константы для MaxMind GeoLite2 ---
+MAXMIND_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.07/GeoLite2-Country.mmdb"
+MAXMIND_DB_PATH = "GeoLite2-Country.mmdb"
+# --- Конец констант для MaxMind GeoLite2 ---
+
 COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = { # Словарь соответствия кодов стран и эмодзи флагов (ISO 3166-1 alpha-2)
     "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "FR": "🇫🇷", "JP": "🇯🇵",
     "CN": "🇨🇳", "RU": "🇷🇺", "KR": "🇰🇷", "SG": "🇸🇬", "CA": "🇨🇦",
@@ -191,43 +196,49 @@ def calculate_profile_score(profile):
         logging.error(f"Ошибка при расчете скора профиля '{profile}': {e}")
         return 0
 
-    return score
-
 async def get_country_flag_emoji(ip_address: str, db_path: str) -> str:
     """
-    Асинхронно определяет страну по IP-адресу и возвращает эмодзи флага.
+    Асинхронно определяет страну по IP-адресу и возвращает эмодзи флага, используя MaxMind GeoLite2.
 
     Аргументы:
         ip_address: IP-адрес сервера.
-        db_path: Путь к базе данных IP2Location.
+        db_path: Путь к базе данных MaxMind GeoLite2 (.mmdb файл).
 
     Возвращает:
         str: Эмодзи флага страны или DEFAULT_FLAG_EMOJI, если страна не определена или произошла ошибка.
     """
     try:
-        IP2LocObj = ip2location.IP2Location(db_path) # type: ignore
+        loop = asyncio.get_running_loop() # Получаем текущий event loop
+        with geoip2.database.Reader(db_path, loop=loop) as reader: # Открываем базу данных GeoLite2 с asyncio loop
+            def blocking_lookup(): # Функция для блокирующего вызова в отдельном потоке
+                try:
+                    response = reader.country(ip_address) # Выполняем поиск страны
+                    country_code = response.country.iso_code # Получаем ISO код страны
+                    if country_code:
+                        return country_code
+                except geoip2.errors.AddressNotFoundError: # Обрабатываем случай, когда IP не найден в базе
+                    logging.warning(f"IP-адрес '{ip_address}' не найден в базе данных GeoLite2.")
+                    return None # Возвращаем None, если IP не найден
+                except Exception as e:
+                    logging.warning(f"Ошибка GeoLite2 для IP '{ip_address}': {e}")
+                    return None # Возвращаем None в случае ошибки GeoLite2
+                return None # Возвращаем None, если код страны не получен
 
-        def blocking_lookup(): # Функция для блокирующего вызова в отдельном потоке
-            try:
-                rec = IP2LocObj.get_country_short(ip_address)
-                if rec and rec != '??': # rec может быть None или '??' в случае ошибки
-                    return rec
-            except ip2location.IP2LocationError as e: # type: ignore
-                logging.warning(f"Ошибка IP2Location для IP '{ip_address}': {e}")
-            return None # Возвращаем None в случае ошибки или '??'
+            country_code = await asyncio.to_thread(blocking_lookup) # Запускаем блокирующий вызов в пуле потоков
 
-        country_code = await asyncio.to_thread(blocking_lookup) # Запускаем блокирующий вызов в пуле потоков
+            if country_code and country_code in COUNTRY_CODE_TO_FLAG_EMOJI:
+                return COUNTRY_CODE_TO_FLAG_EMOJI[country_code]
+            else:
+                return DEFAULT_FLAG_EMOJI # Используем default flag если код страны не найден в словаре или lookup вернул None
 
-        if country_code and country_code in COUNTRY_CODE_TO_FLAG_EMOJI:
-            return COUNTRY_CODE_TO_FLAG_EMOJI[country_code]
-        else:
-            return DEFAULT_FLAG_EMOJI # Используем default flag если код страны не найден в словаре или lookup вернул None
-
-    except Exception as e: # Ловим любые ошибки, включая отсутствие файла базы данных, ошибки открытия и т.д.
-        logging.error(f"Критическая ошибка при определении страны для IP '{ip_address}': {e}")
+    except FileNotFoundError: # Обработка случая, когда файл базы данных не найден
+        logging.error(f"Файл базы данных GeoLite2 не найден по пути: '{db_path}'. Пожалуйста, скачайте и поместите его в указанное место.")
+        return UNKNOWN_FLAG_EMOJI # Используем unknown flag emoji в случае ошибки
+    except Exception as e: # Ловим любые другие ошибки, включая ошибки открытия и т.д.
+        logging.error(f"Критическая ошибка при определении страны для IP '{ip_address}' (GeoLite2): {e}")
         return UNKNOWN_FLAG_EMOJI # Используем unknown flag emoji в случае крит. ошибки
 
-async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, ip2location_db_path):
+async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegram_channel_names, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, maxmind_db_path):
     """
     Обрабатывает один телеграм канал для извлечения профилей.
 
@@ -247,7 +258,7 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
         channel_failure_counts (dict): Словарь для хранения счетчиков неудачных проверок каналов.
         channels_to_remove (list): Список каналов для удаления.
         no_more_pages_counts (dict): Словарь для хранения счетчиков "Больше страниц не найдено" для каналов.
-        ip2location_db_path (str): Путь к базе данных IP2Location.
+        maxmind_db_path (str): Путь к базе данных MaxMind GeoLite2.
     """
     thread_semaphore.acquire()
     channel_removed_in_run = False # Флаг, чтобы избежать двойного добавления в channels_to_remove за один проход
@@ -327,7 +338,7 @@ async def process_channel(channel_url, parsed_profiles, thread_semaphore, telegr
                                     score = calculate_profile_score(profile_link)
                                     host_match = re.search(r"@([\w\.\-]+):", profile_link) # Extract host before port
                                     ip_address = host_match.group(1) if host_match else None # Get IP address
-                                    country_flag_emoji_task = asyncio.create_task(get_country_flag_emoji(ip_address, ip2location_db_path)) if ip_address else asyncio.Future() # Start async task, or create a dummy future if no IP
+                                    country_flag_emoji_task = asyncio.create_task(get_country_flag_emoji(ip_address, maxmind_db_path)) if ip_address else asyncio.Future() # Start async task, or create a dummy future if no IP
                                     if not ip_address:
                                         country_flag_emoji_task.set_result(DEFAULT_FLAG_EMOJI) # If no IP, set default emoji immediately
                                     country_flag_emoji_tasks.append(country_flag_emoji_task) # Add task to list
@@ -520,52 +531,52 @@ def save_no_more_pages_history(history):
     """Сохраняет историю 'Больше страниц не найдено' для каналов в файл."""
     return json_save(history, NO_MORE_PAGES_HISTORY_FILE)
 
-def download_ip2location_db(db_url, db_path):
+def download_maxmind_db(db_url, db_path):
     """
-    Загружает базу данных IP2Location LITE DB1.
+    Загружает базу данных MaxMind GeoLite2 Country MMDB.
 
     Аргументы:
         db_url: URL для скачивания ZIP-архива базы данных.
-        db_path: Путь для сохранения извлеченного файла базы данных (BIN).
+        db_path: Путь для сохранения файла базы данных (MMDB).
     """
-    logging.info(f"Загрузка базы данных IP2Location...")
+    logging.info(f"Загрузка базы данных MaxMind GeoLite2 Country...")
     try:
         response = requests.get(db_url, stream=True, timeout=30) # Увеличиваем таймаут для скачивания
         response.raise_for_status() # Проверка на ошибки HTTP
 
-        zip_path = "ip2location_temp.zip" # Временный файл для ZIP архива
-        with open(zip_path, "wb") as zip_file:
+        tar_gz_path = "maxmind_temp.tar.gz" # Временный файл для tar.gz архива
+        with open(tar_gz_path, "wb") as tar_gz_file:
             for chunk in response.iter_content(chunk_size=8192): # Скачиваем по частям
-                zip_file.write(chunk)
+                tar_gz_file.write(chunk)
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref: # Открываем ZIP архив
-            for filename in zip_ref.namelist(): # Ищем BIN файл в архиве (может быть в подпапке)
-                if filename.upper().endswith(".BIN"):
-                    zip_ref.extract(filename, ".") # Извлекаем в текущую директорию
-                    extracted_path = filename # Путь к извлеченному файлу
+        with tarfile.open(tar_gz_path, "r:gz") as tar_ref: # Открываем tar.gz архив
+            for member in tar_ref.getmembers(): # Ищем MMDB файл в архиве (может быть в подпапке)
+                if member.name.endswith(".mmdb"):
+                    tar_ref.extract(member, ".") # Извлекаем в текущую директорию
+                    extracted_path = member.name # Путь к извлеченному файлу
                     os.rename(extracted_path, db_path) # Переименовываем в db_path
                     break # Нашли и извлекли, выходим из цикла
-            else: # for...else, выполнится если BIN файл не найден в архиве
-                raise FileNotFoundError("BIN файл не найден в ZIP архиве.")
+            else: # for...else, выполнится если MMDB файл не найден в архиве
+                raise FileNotFoundError("MMDB файл не найден в tar.gz архиве.")
 
-        os.remove(zip_path) # Удаляем временный ZIP файл
-        logging.info(f"База данных IP2Location успешно загружена и сохранена в '{db_path}'.")
+        os.remove(tar_gz_path) # Удаляем временный tar.gz файл
+        logging.info(f"База данных MaxMind GeoLite2 успешно загружена и сохранена в '{db_path}'.")
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при скачивании базы данных IP2Location: {e}")
-    except zipfile.BadZipFile:
-        logging.error(f"Ошибка: Поврежденный ZIP архив базы данных IP2Location.")
-        if os.path.exists(zip_path): # Пытаемся удалить поврежденный zip, если он есть
-            os.remove(zip_path)
+        logging.error(f"Ошибка при скачивании базы данных MaxMind GeoLite2: {e}")
+    except tarfile.ReadError:
+        logging.error(f"Ошибка: Поврежденный tar.gz архив базы данных MaxMind GeoLite2.")
+        if os.path.exists(tar_gz_path): # Пытаемся удалить поврежденный архив, если он есть
+            os.remove(tar_gz_path)
     except FileNotFoundError as e:
         logging.error(f"Ошибка: {e}")
     except Exception as e: # Ловим все остальные исключения
-        logging.error(f"Непредвиденная ошибка при загрузке и обработке базы данных IP2Location: {e}")
+        logging.error(f"Непредвиденная ошибка при загрузке и обработке базы данных MaxMind GeoLite2: {e}")
 
 
 if __name__ == "__main__":
-    if not os.path.exists(IP2LOCATION_DB_PATH): # Проверяем наличие базы данных IP2Location
-        download_ip2location_db(IP2LOCATION_DB_URL, IP2LOCATION_DB_PATH) # Скачиваем, если нет
+    if not os.path.exists(MAXMIND_DB_PATH): # Проверяем наличие базы данных MaxMind GeoLite2
+        download_maxmind_db(MAXMIND_DB_URL, MAXMIND_DB_PATH) # Скачиваем, если нет
 
     telegram_channel_names_original = json_load('telegram_channels.json') # Загружаем оригинальный список, чтобы не менять его во время итерации
     if telegram_channel_names_original is None:
@@ -600,7 +611,7 @@ if __name__ == "__main__":
     async def main(): # Определяем асинхронную функцию main
         threads = []
         for channel_name in telegram_channel_names_to_parse: # Итерируемся по копии списка
-            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, IP2LOCATION_DB_PATH))) # Запускаем асинхронную функцию process_channel в отдельном потоке
+            thread = threading.Thread(target=lambda ch_name=channel_name: asyncio.run(process_channel(ch_name, parsed_profiles, thread_semaphore, telegram_channel_names_original, channels_parsed_count, channels_with_profiles, channel_failure_counts, channels_to_remove, no_more_pages_counts, MAXMIND_DB_PATH))) # Запускаем асинхронную функцию process_channel в отдельном потоке
             threads.append(thread)
             thread.start()
 
