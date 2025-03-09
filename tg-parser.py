@@ -51,25 +51,8 @@ NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'  # Файл для х�
 MAX_NO_MORE_PAGES_COUNT = 4  # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
 PROFILE_FRESHNESS_DAYS = 7  # Период свежести профилей в днях (от момента запуска скрипта)
 
-# --- Константы для флагов и эмодзи ---
-COUNTRY_CODE_TO_FLAG_EMOJI: Dict[str, str] = {
-    "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "FR": "🇫🇷", "JP": "🇯🇵",
-    "CN": "🇨🇳", "RU": "🇷🇺", "KR": "🇰🇷", "SG": "🇸🇬", "CA": "🇨🇦",
-    "AU": "🇦🇺", "IN": "🇮🇳", "BR": "🇧🇷", "CH": "🇨🇭", "SE": "🇸🇪",
-    "NL": "🇳🇱", "ES": "🇪🇸", "IT": "🇮🇹", "BE": "🇧🇪", "HK": "🇭🇰",
-    "TR": "🇹🇷", "UA": "🇺🇦", "VN": "🇻🇳", "PL": "🇵🇱", "AR": "🇦🇷",
-    "MX": "🇲🇽", "ID": "🇮🇩", "MY": "🇲🇾", "PH": "🇵🇭", "TH": "🇹🇭",
-    "ZA": "🇿🇦", "AE": "🇦🇪", "PT": "🇵🇹", "IE": "🇮🇪", "CL": "🇨🇱",
-    "CO": "🇨🇴", "SA": "🇸🇦", "NZ": "🇳🇿", "CZ": "🇨🇿", "GR": "🇬🇷",
-    "RO": "🇷🇴", "IL": "🇮🇱", "EG": "🇪🇬", "NG": "🇳🇬", "KE": "🇰🇪",
-    "PK": "🇵🇰", "BD": "🇧🇩", "LK": "🇱🇰", "IR": "🇮🇷", "IQ": "🇮🇶",
-    "SY": "🇸🇾", "JO": "🇯🇴", "KW": "🇰🇼", "QA": "🇶🇦", "BH": "🇧🇭",
-    "OM": "🇴🇲", "LB": "🇱🇧", "CY": "🇨🇾", "GLOBAL": "🌐", "UNKNOWN": "🤔"
-}
-DEFAULT_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["GLOBAL"]
-UNKNOWN_FLAG_EMOJI = COUNTRY_CODE_TO_FLAG_EMOJI["UNKNOWN"]
-STATIC_PROFILE_FLAG = DEFAULT_FLAG_EMOJI
-VLESS_EMOJI = "🌠"  # ✨
+# --- Эмодзи для протоколов ---
+VLESS_EMOJI = "🌠"  
 HY2_EMOJI = "⚡"
 TUIC_EMOJI = "🚀"
 TROJAN_EMOJI = "🛡️"
@@ -346,7 +329,6 @@ async def process_parsed_profiles(parsed_profiles_list):
         cleaned_profile_string = clean_profile(item['profile'])
         protocol = ""
         profile_to_add = None
-        country_flag_emoji = STATIC_PROFILE_FLAG  # Используем статичный флаг
 
         params_str = cleaned_profile_string.split("://")[1]
         if "@" in params_str:
@@ -355,7 +337,7 @@ async def process_parsed_profiles(parsed_profiles_list):
             params_str = params_str.split("#")[0]
         params = urllib_parse.parse_qs(params_str)
 
-        security_info = "NoTLS"  # Default value
+        security_info = "NoTLS"  # Значение по умолчанию
         if params.get("security", [""])[0] == "tls":
             security_info = "TLS"
 
@@ -367,8 +349,7 @@ async def process_parsed_profiles(parsed_profiles_list):
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'country_flag_emoji': country_flag_emoji,
-                    'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                    'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info})"
                 }
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
@@ -378,8 +359,7 @@ async def process_parsed_profiles(parsed_profiles_list):
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'country_flag_emoji': country_flag_emoji,
-                    'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                    'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info})"
                 }
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
@@ -388,8 +368,7 @@ async def process_parsed_profiles(parsed_profiles_list):
                 'profile': part.strip(),
                 'score': item['score'],
                 'date': item['date'],
-                'country_flag_emoji': country_flag_emoji,
-                'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC) {country_flag_emoji}"
+                'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC)"
             }
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
@@ -399,8 +378,7 @@ async def process_parsed_profiles(parsed_profiles_list):
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'country_flag_emoji': country_flag_emoji,
-                    'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info}) {country_flag_emoji}"
+                    'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info})"
                 }
         if profile_to_add:
             processed_profiles.append(profile_to_add)
@@ -425,7 +403,6 @@ async def process_parsed_profiles(parsed_profiles_list):
             'profile': x.strip(),
             'score': profile_data['score'],
             'date': profile_data['date'],
-            'country_flag_emoji': profile_data['country_flag_emoji'],
             'profile_name': profile_data['profile_name']
         })
 
@@ -570,9 +547,9 @@ if __name__ == "__main__":
     logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
     logging.info(f'Каналов обработано: {channels_parsed_count}')
     logging.info(f'Каналов, в которых найдены профили: {len(channels_with_profiles)}')
-    logging.info(f'Профилей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
+    logging.info(f'Профелей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
     logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
-    logging.info(f'Профилей сохранено в config-tg.txt: {len(profiles_to_save)}')
+    logging.info(f'Профелей сохранено в config-tg.txt: {len(profiles_to_save)}')
     if channels_to_remove:
         logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
     else:
