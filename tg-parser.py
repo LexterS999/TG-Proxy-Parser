@@ -42,8 +42,7 @@ PROFILE_SCORE_WEIGHTS = {
 MAX_FAILED_CHECKS = 4 # Новая константа: Максимальное количество неудачных проверок перед удалением канала
 FAILURE_HISTORY_FILE = 'channel_failure_history.json' # Файл для хранения истории неудач
 
-# PROFILE_DOWNLOAD_START_DAY = 1 # День начала периода скачивания профилей - УСТАРЕЛА
-# PROFILE_DOWNLOAD_PERIOD_DAYS = 7 # Период в днях для скачивания профилей - УСТАРЕЛА
+PROFILE_FRESHNESS_DAYS = 7 # Период свежести профилей в днях (от момента запуска скрипта)
 # --- Конец глобальных констант ---
 
 if not os.path.exists('config-tg.txt'):
@@ -395,7 +394,8 @@ if __name__ == "__main__":
     initial_channels_count = len(telegram_channel_names_original)
     logging.info(f'Начальное количество каналов в telegram_channels.json: {initial_channels_count}')
 
-    # --- Удален блок проверки текущего дня месяца ---
+    # --- Блок проверки текущего дня месяца удален ---
+    # --- Теперь скрипт запускается всегда, независимо от даты ---
 
     channel_failure_counts = load_failure_history() # Загрузка истории неудач
     channels_to_remove = [] # Список каналов на удаление в этом прогоне
