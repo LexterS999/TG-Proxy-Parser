@@ -443,6 +443,10 @@ async def process_parsed_profiles(parsed_profiles_list):
 
 def load_failure_history():
     """Загружает историю неудачных проверок каналов из файла."""
+    if not os.path.exists(FAILURE_HISTORY_FILE):
+        logging.info(f"Файл {FAILURE_HISTORY_FILE} не найден при первом запуске. Создаем пустой файл.")
+        json_save({}, FAILURE_HISTORY_FILE) # Создаем пустой JSON файл
+        return {} # Возвращаем пустой словарь
     history = json_load(FAILURE_HISTORY_FILE)
     return history if history else {}
 
@@ -452,6 +456,10 @@ def save_failure_history(history):
 
 def load_no_more_pages_history():
     """Загружает историю 'Больше страниц не найдено' для каналов из файла."""
+    if not os.path.exists(NO_MORE_PAGES_HISTORY_FILE):
+        logging.info(f"Файл {NO_MORE_PAGES_HISTORY_FILE} не найден при первом запуске. Создаем пустой файл.")
+        json_save({}, NO_MORE_PAGES_HISTORY_FILE) # Создаем пустой JSON файл
+        return {} # Возвращаем пустой словарь
     history = json_load(NO_MORE_PAGES_HISTORY_FILE)
     return history if history else {}
 
