@@ -354,43 +354,44 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
         if "vless://" in cleaned_profile_string:
             protocol = "vless"
-            part = f'vless://{cleaned_profile_string.split("vless://")[1]}'
-            if "flow=xtls-rprx-direct" not in part and "@" in part and ":" in part[8:]:
-                profile_to_add = {
-                    'profile': part.strip(),
-                    'score': item['score'],
-                    'date': item['date'],
-                    'profile_name': f"{VLESS_EMOJI} VLESS - {security_info}" # Новое оформление
-                }
-        elif "hy2://" in cleaned_profile_string:
-            protocol = "hy2"
-            part = f'hy2://{cleaned_profile_string.split("hy2://")[1]}'
-            if "@" in part and ":" in part[6:]:
-                profile_to_add = {
-                    'profile': part.strip(),
-                    'score': item['score'],
-                    'date': item['date'],
-                    'profile_name': f"{HY2_EMOJI} HY2 - {security_info}" # Новое оформление
-                }
-        elif "tuic://" in cleaned_profile_string:
-            protocol = "tuic"
-            part = f'tuic://{cleaned_profile_string.split("tuic://")[1]}'
+            part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
+            beautiful_name = f"{VLESS_EMOJI} VLESS - {security_info}"
             profile_to_add = {
-                'profile': part.strip(),
+                'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
                 'score': item['score'],
                 'date': item['date'],
-                'profile_name': f"{TUIC_EMOJI} TUIC - QUIC" # Новое оформление
+                'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
+            }
+        elif "hy2://" in cleaned_profile_string:
+            protocol = "hy2"
+            part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
+            beautiful_name = f"{HY2_EMOJI} HY2 - {security_info}"
+            profile_to_add = {
+                'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
+                'score': item['score'],
+                'date': item['date'],
+                'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
+            }
+        elif "tuic://" in cleaned_profile_string:
+            protocol = "tuic"
+            part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
+            beautiful_name = f"{TUIC_EMOJI} TUIC - QUIC"
+            profile_to_add = {
+                'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
+                'score': item['score'],
+                'date': item['date'],
+                'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
-            part = f'trojan://{cleaned_profile_string.split("trojan://")[1]}'
-            if "@" in part and ":" in part[9:]:
-                profile_to_add = {
-                    'profile': part.strip(),
-                    'score': item['score'],
-                    'date': item['date'],
-                    'profile_name': f"{TROJAN_EMOJI} TROJAN - {security_info}" # Новое оформление
-                }
+            part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
+            beautiful_name = f"{TROJAN_EMOJI} TROJAN - {security_info}"
+            profile_to_add = {
+                'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
+                'score': item['score'],
+                'date': item['date'],
+                'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
+            }
         if profile_to_add:
             processed_profiles.append(profile_to_add)
 
@@ -527,7 +528,7 @@ def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict]
 
     with open("config-tg.txt", "w", encoding="utf-8") as file:
         for profile_data in profiles_to_save:
-            file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')} {profile_data['profile_name']}\n")
+            file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')}\n") # Записываем только profile, имя уже внутри
 
     if channels_to_remove:
         logging.info(f"Удаляем каналы: {channels_to_remove}")
