@@ -1,0 +1,27 @@
+{
+  "profile_score_weights": {
+    "security": 2,
+    "sni": 2,
+    "alpn": 2,
+    "flow": 2,
+    "headerType": 1,
+    "path": 1,
+    "obfs": 1,
+    "mport": 1
+  },
+  "profile_cleaning_rules": [
+    "%0A",
+    "%250A",
+    "%0D",
+    "amp;",
+    "�",
+    "fp=(firefox|safari|edge|360|qq|ios|android|randomized|random)"
+  ],
+  "profile_freshness_days": 3,
+  "max_failed_checks": 4,
+  "max_no_more_pages_count": 4,
+  "max_threads_parsing": 100,
+  "request_timeout_aiohttp": 30,
+  "min_profiles_to_download": 1,
+  "max_profiles_to_download": 9000
+}
