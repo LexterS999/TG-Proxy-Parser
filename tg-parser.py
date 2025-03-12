@@ -72,6 +72,10 @@ def json_load(path: str) -> Optional[dict]:
         logging.error(f"Файл не найден: {path}")
         return None
 
+    if os.stat(path).st_size == 0: # Проверка на пустой файл
+        logging.warning(f"Файл '{path}' пуст. Возвращаем пустой словарь.")
+        return {}
+
     try:
         with open(path, 'r', encoding="utf-8") as file:
             data = json.load(file)
