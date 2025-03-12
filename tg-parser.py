@@ -222,6 +222,7 @@ async def parse_profiles_from_page_async(html_page: str, channel_url: str, allow
 
 async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], thread_semaphore: asyncio.Semaphore, telegram_channel_names: List[str], channels_parsed_count: int, channels_with_profiles: Set[str], channel_failure_counts: Dict[str, int], channels_to_remove: List[str], no_more_pages_counts: Dict[str, int], allowed_protocols: Set[str], profile_score_func) -> None:
     """Асинхронно обрабатывает один телеграм канал для извлечения профилей."""
+    failed_check = False # Инициализация переменной failed_check
     channel_removed_in_run = False # Флаг, чтобы избежать двойного добавления в channels_to_remove за один проход
     async with thread_semaphore: # Используем асинхронный семафор
         try:
@@ -231,6 +232,7 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
             god_tg_name = False
             pattern_datbef = re.compile(r'(?:data-before=")(\d*)')
             no_more_pages_in_run = False
+
 
             async with aiohttp.ClientSession() as session: # Создаем асинхронную сессию aiohttp
                 for attempt in range(2): # Оставляем 2 попытки на загрузку страниц
@@ -481,7 +483,7 @@ async def load_channels_async(channels_file: str = 'telegram_channels.json') -> 
     telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if len(x) >= 5]
     return list(set(telegram_channel_names_original))
 
-async def run_parsing_async(telegram_channel_names_to_parse: List[str], channel_history_manager: ChannelHistoryManager) -> tuple[List[Dict], Set[str], List[str]]:
+async def run_parsing_async(telegram_channel_names_to_parse: List[str], channel_history_manager: ChannelHistoryManager) -> tuple[List[Dict], Set[str], List[str], Dict, Dict]:
     """Запускает асинхронный парсинг каналов."""
     channels_parsed_count = len(telegram_channel_names_to_parse)
     logging.info(f'Начинаем парсинг {channels_parsed_count} телеграм каналов...')
@@ -504,9 +506,9 @@ async def run_parsing_async(telegram_channel_names_to_parse: List[str], channel_
 
     await asyncio.gather(*tasks) # Запускаем все задачи параллельно и ждем их завершения
 
-    return parsed_profiles, channels_with_profiles, channels_to_remove
+    return parsed_profiles, channels_with_profiles, channels_to_remove, channel_failure_counts, no_more_pages_counts
 
-def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict], channels_to_remove: List[str], telegram_channel_names_original: List[str], channel_history_manager: ChannelHistoryManager) -> None:
+def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict], channels_to_remove: List[str], telegram_channel_names_original: List[str], channel_history_manager: ChannelHistoryManager, channel_failure_counts: Dict, no_more_pages_counts: Dict) -> None:
     """Сохраняет результаты парсинга: профили, обновленный список каналов, историю."""
     num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
     profiles_to_save = final_profiles_scored[:num_profiles_to_save]
@@ -526,8 +528,8 @@ def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict]
     else:
         logging.info("Нет каналов для удаления.")
 
-    channel_history_manager.save_failure_history(channel_failure_counts) # type: ignore # channel_failure_counts created in run_parsing_async scope
-    channel_history_manager.save_no_more_pages_history(no_more_pages_counts) # type: ignore # no_more_pages_counts created in run_parsing_async scope
+    channel_history_manager.save_failure_history(channel_failure_counts)
+    channel_history_manager.save_no_more_pages_history(no_more_pages_counts)
 
 def log_statistics(start_time: datetime, initial_channels_count: int, channels_parsed_count: int, parsed_profiles: List[Dict], final_profiles_scored: List[Dict], profiles_to_save: List[Dict], channels_with_profiles: Set[str], channels_to_remove: List[str]) -> None:
     """Логирует итоговую статистику парсинга."""
@@ -578,12 +580,12 @@ async def main_async():
 
     channel_history_manager = ChannelHistoryManager()
     logging.info(f'Начинаем парсинг...')
-    parsed_profiles, channels_with_profiles, channels_to_remove = await run_parsing_async(telegram_channel_names_to_parse, channel_history_manager)
+    parsed_profiles, channels_with_profiles, channels_to_remove, channel_failure_counts, no_more_pages_counts = await run_parsing_async(telegram_channel_names_to_parse, channel_history_manager)
     logging.info(f'Парсинг завершен. Начинаем обработку и фильтрацию спарсенных конфигов...')
 
     final_profiles_scored = await process_parsed_profiles_async(parsed_profiles)
     profiles_to_save = final_profiles_scored[:min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)]
-    save_results(final_profiles_scored, profiles_to_save, channels_to_remove, telegram_channel_names_original, channel_history_manager)
+    save_results(final_profiles_scored, profiles_to_save, channels_to_remove, telegram_channel_names_original, channel_history_manager, channel_failure_counts, no_more_pages_counts)
     log_statistics(start_time, initial_channels_count, len(telegram_channel_names_to_parse), parsed_profiles, final_profiles_scored, profiles_to_save, channels_with_profiles, channels_to_remove)
 
 if __name__ == "__main__":
