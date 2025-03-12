@@ -61,12 +61,7 @@ if not os.path.exists('config-tg.txt'):
 
 def json_load(path: str) -> Optional[dict]:
     """
-    Загружает JSON файл и обрабатывает ошибки.
-
-    Возвращает:
-        dict или list или None: Содержимое JSON файла, если загрузка успешна.
-                                None, если файл не найден или произошла ошибка декодирования.
-                                Логгирует ошибки.
+    Загружает JSON файл и обрабатывает ошибки, включая пустые файлы и ошибки декодирования.
     """
     if not os.path.exists(path):
         logging.error(f"Файл не найден: {path}")
@@ -84,6 +79,12 @@ def json_load(path: str) -> Optional[dict]:
                 return None
             return data
     except json.JSONDecodeError as e:
+        # Дополнительная проверка, является ли ошибка из-за пустого файла
+        with open(path, 'r', encoding="utf-8") as f:
+            content = f.read()
+            if not content.strip(): # Файл действительно пуст или содержит только пробелы
+                logging.warning(f"Файл '{path}' оказался пустым, хотя и не был распознан как пустой ранее. Возвращаем пустой словарь.")
+                return {}
         logging.error(f"Ошибка декодирования JSON в файле: {path} - {e}. Возвращаем None.")
         return None
 
@@ -455,24 +456,31 @@ class ChannelHistoryManager:
 
     def _load_json_history(self, filepath: str) -> Dict:
         if not os.path.exists(filepath):
-            logging.warning(f"Файл истории '{filepath}' не найден при первом запуске. Создаем пустой файл.")
+            logging.warning(f"Файл истории '{filepath}' не найден при первом запуске. Создаем пустой файл: {filepath}")
             if not json_save({}, filepath): # Обработка ошибки создания файла
                 logging.error(f"Не удалось создать файл истории: {filepath}")
                 return {} # Возвращаем пустой словарь в случае ошибки создания
             return {}
         history = json_load(filepath)
+        if history is None: # json_load может вернуть None в случае ошибки декодирования
+            logging.warning(f"Ошибка при загрузке истории из '{filepath}', возможно файл поврежден. Возвращаем пустую историю.")
+            return {}
         return history if history else {}
 
+
     def _save_json_history(self, history: Dict, filepath: str) -> bool:
+        logging.info(f"Сохранение истории в '{filepath}'.") # Добавлено логирование сохранения
         return json_save(history, filepath)
 
     def load_failure_history(self) -> Dict:
+        logging.info(f"Загрузка истории неудач из '{self.failure_file}'.") # Добавлено логирование загрузки
         return self._load_json_history(self.failure_file)
 
     def save_failure_history(self, history: Dict) -> bool:
         return self._save_json_history(history, self.failure_file)
 
     def load_no_more_pages_history(self) -> Dict:
+        logging.info(f"Загрузка истории 'нет страниц' из '{self.no_more_pages_file}'.") # Добавлено логирование загрузки
         return self._load_json_history(self.no_more_pages_file)
 
     def save_no_more_pages_history(self, history: Dict) -> bool:
