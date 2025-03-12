@@ -360,7 +360,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'profile_name': f"{VLESS_EMOJI}{protocol.upper()} ({security_info})"
+                    'profile_name': f"{VLESS_EMOJI} VLESS - {security_info}" # Новое оформление
                 }
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
@@ -370,7 +370,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'profile_name': f"{HY2_EMOJI}{protocol.upper()} ({security_info})"
+                    'profile_name': f"{HY2_EMOJI} HY2 - {security_info}" # Новое оформление
                 }
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
@@ -379,7 +379,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 'profile': part.strip(),
                 'score': item['score'],
                 'date': item['date'],
-                'profile_name': f"{TUIC_EMOJI}{protocol.upper()} (QUIC)"
+                'profile_name': f"{TUIC_EMOJI} TUIC - QUIC" # Новое оформление
             }
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
@@ -389,7 +389,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                     'profile': part.strip(),
                     'score': item['score'],
                     'date': item['date'],
-                    'profile_name': f"{TROJAN_EMOJI}{protocol.upper()} ({security_info})"
+                    'profile_name': f"{TROJAN_EMOJI} TROJAN - {security_info}" # Новое оформление
                 }
         if profile_to_add:
             processed_profiles.append(profile_to_add)
