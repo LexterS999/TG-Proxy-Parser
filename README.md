@@ -64,29 +64,6 @@ asyncio
 beautifulsoup4 (bs4)
 urllib3
 
-Файл config.json позволяет настроить различные параметры работы скрипта. Если файл отсутствует, используются значения по умолчанию.
-
-{
-  "profile_score_weights": {
-    "security": 2,
-    "sni": 2,
-    "alpn": 2,
-    "flow": 2,
-    "headerType": 1,
-    "path": 1,
-    "obfs": 1,
-    "mport": 1
-  },
-  "profile_cleaning_rules": ["%0A","%250A","%0D","amp;","�","fp=(firefox|safari|edge|360|qq|ios|android|randomized|random)"],
-  "profile_freshness_days": 14,
-  "max_failed_checks": 4,
-  "max_no_more_pages_count": 4,
-  "max_threads_parsing": 100,
-  "request_timeout_aiohttp": 30,
-  "min_profiles_to_download": 100,
-  "max_profiles_to_download": 20000
-}
-
 profile_score_weights: Веса параметров, используемые для расчета скора профиля. Изменение весов позволяет влиять на приоритезацию определенных характеристик профилей.
 
 profile_cleaning_rules: Список регулярных выражений для очистки профилей от нежелательных фрагментов.
