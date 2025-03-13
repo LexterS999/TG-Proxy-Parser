@@ -24,8 +24,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Глобальные константы ---
 MAX_THREADS_PARSING = 100
 REQUEST_TIMEOUT_AIOHTTP = 30
-MIN_PROFILES_TO_DOWNLOAD = 1
-MAX_PROFILES_TO_DOWNLOAD = 12000
+MIN_PROFILES_TO_DOWNLOAD = 100
+MAX_PROFILES_TO_DOWNLOAD = 20000
 ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan"}
 PROFILE_SCORE_WEIGHTS = {
     "security": 2,
@@ -41,7 +41,7 @@ MAX_FAILED_CHECKS = 4  # Максимальное количество неуд�
 FAILURE_HISTORY_FILE = 'channel_failure_history.json'  # Файл для хранения истории неудач
 NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'  # Файл для хранения истории "Больше страниц не найдено"
 MAX_NO_MORE_PAGES_COUNT = 4  # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
-PROFILE_FRESHNESS_DAYS = 7  # Период свежести профилей в днях (от момента запуска скрипта)
+PROFILE_FRESHNESS_DAYS = 14  # Период свежести профилей в днях (от момента запуска скрипта)
 
 CONFIG_FILE = 'config.json' # Файл конфигурации
 PROFILE_CLEANING_RULES_DEFAULT = [ # Правила очистки профилей по умолчанию
