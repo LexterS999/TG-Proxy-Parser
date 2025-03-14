@@ -497,7 +497,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
 class ChannelHistoryManager:
     """Менеджер для загрузки и сохранения истории каналов (неудач и 'Больше страниц не найдено')."""
-    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_FILE):
+    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_HISTORY_FILE):
         self.failure_file = failure_file
         self.no_more_pages_file = no_more_pages_file
 
