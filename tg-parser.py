@@ -611,7 +611,8 @@ def log_statistics(start_time: datetime, initial_channels_count: int, channels_p
     logging.info(f'Профелей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
     logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
     logging.info(f'Профелей сохранено в config-tg.txt: {len(profiles_to_save)}')
-    logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
+    if channels_to_remove:
+        logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
     else:
         logging.info(f'Каналов удалено из списка: 0')
     logging.info(f'{"-"*40}')
