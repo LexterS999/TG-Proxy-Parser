@@ -10,11 +10,11 @@
     "mport": 1
   },
   "profile_cleaning_rules": [],
-  "profile_freshness_days": 3,
-  "max_failed_checks": 4,
-  "max_no_more_pages_count": 4,
-  "max_threads_parsing": 100,
-  "request_timeout_aiohttp": 30,
-  "min_profiles_to_download": 1,
-  "max_profiles_to_download": 9000
+  "profile_freshness_days": 30,
+  "max_failed_checks": 12,
+  "max_no_more_pages_count": 12,
+  "max_threads_parsing": 10,
+  "request_timeout_aiohttp": 60,
+  "min_profiles_to_download": 1000,
+  "max_profiles_to_download": 200000
 }
