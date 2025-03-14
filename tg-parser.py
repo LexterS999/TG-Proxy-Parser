@@ -44,9 +44,7 @@ MAX_NO_MORE_PAGES_COUNT = 4  # Максимальное количество "Б
 PROFILE_FRESHNESS_DAYS = 4  # Период свежести профилей в днях (от момента запуска скрипта) # Изменено на 4 дня
 
 CONFIG_FILE = 'config.json' # Файл конфигурации
-PROFILE_CLEANING_RULES_DEFAULT = [ # Правила очистки профилей по умолчанию
-    '%0A', '%250A', '%0D', 'amp;', '�', 'fp=(firefox|safari|edge|360|qq|ios|android|randomized|random)'
-]
+PROFILE_CLEANING_RULES_DEFAULT = [] # Правила очистки профилей по умолчанию - **ОЧИСТКА ПРАВИЛ УДАЛЕНИЯ**
 PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
 
 # --- Эмодзи для протоколов ---
@@ -353,7 +351,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
     удаление дубликатов и подстрок, фильтрация по свежести, итоговая уникализация по IP/порт, итоговая сортировка.
     """
     processed_profiles = []
-    unique_ip_port_set = set() # Для уникализации по IP/порт
+    unique_ip_port_protocol_set = set() # Для уникализации по IP/порт/протокол
 
     for item in parsed_profiles_list:
         cleaned_profile_string = clean_profile(item['profile'])
@@ -365,11 +363,22 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             logging.warning(f"Не удалось извлечь IP и порт из профиля: {cleaned_profile_string[:100]}...")
             continue # Пропускаем профиль, если не удалось извлечь IP и порт
 
-        ip_port_tuple = (ip, port)
-        if ip_port_tuple in unique_ip_port_set:
-            logging.debug(f"Дубликат IP/порт найден, профиль пропущен: {cleaned_profile_string[:100]}...")
-            continue # Пропускаем дубликат по IP/порт
-        unique_ip_port_set.add(ip_port_tuple)
+        if "vless://" in cleaned_profile_string:
+            protocol = "vless"
+        elif "hy2://" in cleaned_profile_string:
+            protocol = "hy2"
+        elif "tuic://" in cleaned_profile_string:
+            protocol = "tuic"
+        elif "trojan://" in cleaned_profile_string:
+            protocol = "trojan"
+        elif "ss://" in cleaned_profile_string:
+            protocol = "ss"
+
+        ip_port_protocol_tuple = (ip, port, protocol) # Учитываем протокол в кортеже уникальности
+        if ip_port_protocol_tuple in unique_ip_port_protocol_set: # Проверка по IP, порту и протоколу
+            logging.debug(f"Дубликат IP/порт/протокол найден, профиль пропущен: {cleaned_profile_string[:100]}...")
+            continue # Пропускаем дубликат по IP/порт/протоколу
+        unique_ip_port_protocol_set.add(ip_port_protocol_tuple) # Добавляем кортеж IP/порт/протокол в set
 
 
         params_str = cleaned_profile_string.split("://")[1]
@@ -384,7 +393,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             security_info = "TLS"
 
         if "vless://" in cleaned_profile_string:
-            protocol = "vless"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
             beautiful_name = f"{VLESS_EMOJI} VLESS | {security_info}" # New naming format
             profile_to_add = {
@@ -394,7 +402,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
         elif "hy2://" in cleaned_profile_string:
-            protocol = "hy2"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
             beautiful_name = f"{HY2_EMOJI} HY2 | {security_info}" # New naming format
             profile_to_add = {
@@ -404,7 +411,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
         elif "tuic://" in cleaned_profile_string:
-            protocol = "tuic"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
             beautiful_name = f"{TUIC_EMOJI} TUIC | QUIC" # New naming format
             security_info = "QUIC" # For clarity in logs
@@ -415,7 +421,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
         elif "trojan://" in cleaned_profile_string:
-            protocol = "trojan"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
             beautiful_name = f"{TROJAN_EMOJI} TROJAN | {security_info}" # New naming format
             profile_to_add = {
@@ -425,7 +430,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
         elif "ss://" in cleaned_profile_string: # обработка ss://
-            protocol = "ss"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
             beautiful_name = f"{SS_EMOJI} SS | Shadowsocks" # New naming format for Shadowsocks
             security_info = "Shadowsocks" # For clarity in logs
@@ -450,22 +454,24 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             unique_profiles_scored.append(profile_data)
             seen_profiles.add(profile) # Keeping this for now, but might be redundant after IP/Port uniqueness
 
-    new_processed_profiles_scored = []
-    for profile_data in unique_profiles_scored:
-        x = profile_data['profile']
-        x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip()
-        if x[-2:-1] == '%':
-            x = x[:-2]
-        new_processed_profiles_scored.append({
-            'profile': x.strip(),
-            'score': profile_data['score'],
-            'date': profile_data['date'],
-            'profile_name': profile_data['profile_name']
-        })
+    # --- БЛОК ПОСТ-ОБРАБОТКИ УДАЛЕН/ЗАКОММЕНТИРОВАН ---
+    # new_processed_profiles_scored = []
+    # for profile_data in unique_profiles_scored:
+    #     x = profile_data['profile']
+    #     x = re.sub(r'…»$|…$|»$|%$|`$', '', x).strip()
+    #     if x[-2:-1] == '%':
+    #         x = x[:-2]
+    #     new_processed_profiles_scored.append({
+    #         'profile': x.strip(),
+    #         'score': profile_data['score'],
+    #         'date': profile_data['date'],
+    #         'profile_name': profile_data['profile_name']
+    #     })
+    # processed_profiles_scored = new_processed_profiles_scored
+    processed_profiles_scored = unique_profiles_scored # Используем unique_profiles_scored напрямую
 
-    processed_profiles_scored = new_processed_profiles_scored
     processed_profiles_strings = [item['profile'] for item in processed_profiles_scored]
-    processed_profiles_strings = filter_out_substrings(processed_profiles_strings) # Используем переименованную функцию
+    # processed_profiles_strings = filter_out_substrings(processed_profiles_strings) # **УДАЛЕНО УДАЛЕНИЕ ПОДСТРОК**
 
     final_profiles_scored = []
     profile_strings_set = set(processed_profiles_strings)
@@ -605,8 +611,7 @@ def log_statistics(start_time: datetime, initial_channels_count: int, channels_p
     logging.info(f'Профелей найдено во время парсинга (до обработки): {len(parsed_profiles)}')
     logging.info(f'Уникальных профилей после обработки и фильтрации: {len(final_profiles_scored)}')
     logging.info(f'Профелей сохранено в config-tg.txt: {len(profiles_to_save)}')
-    if channels_to_remove:
-        logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
+    logging.info(f'Каналов удалено из списка: {len(channels_to_remove)}')
     else:
         logging.info(f'Каналов удалено из списка: 0')
     logging.info(f'{"-"*40}')
