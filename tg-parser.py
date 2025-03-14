@@ -26,7 +26,7 @@ MAX_THREADS_PARSING = 100
 REQUEST_TIMEOUT_AIOHTTP = 30
 MIN_PROFILES_TO_DOWNLOAD = 100
 MAX_PROFILES_TO_DOWNLOAD = 20000
-ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan"}
+ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan", "ss"} # Добавлен ss
 PROFILE_SCORE_WEIGHTS = {
     "security": 2,
     "sni": 2,
@@ -41,7 +41,7 @@ MAX_FAILED_CHECKS = 4  # Максимальное количество неуд�
 FAILURE_HISTORY_FILE = 'channel_failure_history.json'  # Файл для хранения истории неудач
 NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'  # Файл для хранения истории "Больше страниц не найдено"
 MAX_NO_MORE_PAGES_COUNT = 4  # Максимальное количество "Больше страниц не найдено" подряд перед удалением канала
-PROFILE_FRESHNESS_DAYS = 14  # Период свежести профилей в днях (от момента запуска скрипта)
+PROFILE_FRESHNESS_DAYS = 4  # Период свежести профилей в днях (от момента запуска скрипта) # Изменено на 4 дня
 
 CONFIG_FILE = 'config.json' # Файл конфигурации
 PROFILE_CLEANING_RULES_DEFAULT = [ # Правила очистки профилей по умолчанию
@@ -54,6 +54,7 @@ VLESS_EMOJI = "🌠"
 HY2_EMOJI = "⚡"
 TUIC_EMOJI = "🚀"
 TROJAN_EMOJI = "🛡️"
+SS_EMOJI = "🧦" # Shadowsocks Emoji
 # --- Конец глобальных констант ---
 
 if not os.path.exists('config-tg.txt'):
@@ -160,6 +161,8 @@ def calculate_profile_score(profile: str) -> int:
         elif protocol == "trojan":
             add_tls_score()
             score += PROFILE_SCORE_WEIGHTS.get("obfs", 0) if "obfs" in params else 0
+        elif protocol == "ss": # Score for ss protocol - can be adjusted based on desired criteria
+            score += 1 # Basic score for ss, can be enhanced based on parameters if needed
 
         base_params_count = len(profile.split("://")[1].split("@")[0].split(":"))
         score += base_params_count
@@ -329,17 +332,45 @@ def clean_profile(profile_string: str) -> str:
     part = re.sub(r'\x01', '', part)
     return part
 
+def extract_ip_port(profile_string: str) -> Optional[tuple[str, str]]:
+    """Извлекает IP-адрес и порт из строки профиля."""
+    try:
+        parsed_url = urllib_parse.urlparse(profile_string)
+        netloc = parsed_url.netloc
+        if "@" in netloc:
+            netloc = netloc.split("@")[1]
+        host_port = netloc.split(":")
+        ip_address = host_port[0]
+        port = host_port[1] if len(host_port) > 1 else None
+        return ip_address, port
+    except Exception:
+        return None, None
+
+
 async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> List[Dict]:
     """
     Обрабатывает список спарсенных профилей: очистка, фильтрация по протоколам,
-    удаление дубликатов и подстрок, фильтрация по свежести, итоговая сортировка.
+    удаление дубликатов и подстрок, фильтрация по свежести, итоговая уникализация по IP/порт, итоговая сортировка.
     """
     processed_profiles = []
+    unique_ip_port_set = set() # Для уникализации по IP/порт
 
     for item in parsed_profiles_list:
         cleaned_profile_string = clean_profile(item['profile'])
         protocol = ""
         profile_to_add = None
+
+        ip, port = extract_ip_port(cleaned_profile_string)
+        if not ip or not port:
+            logging.warning(f"Не удалось извлечь IP и порт из профиля: {cleaned_profile_string[:100]}...")
+            continue # Пропускаем профиль, если не удалось извлечь IP и порт
+
+        ip_port_tuple = (ip, port)
+        if ip_port_tuple in unique_ip_port_set:
+            logging.debug(f"Дубликат IP/порт найден, профиль пропущен: {cleaned_profile_string[:100]}...")
+            continue # Пропускаем дубликат по IP/порт
+        unique_ip_port_set.add(ip_port_tuple)
+
 
         params_str = cleaned_profile_string.split("://")[1]
         if "@" in params_str:
@@ -355,7 +386,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         if "vless://" in cleaned_profile_string:
             protocol = "vless"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
-            beautiful_name = f"{VLESS_EMOJI} VLESS - {security_info}"
+            beautiful_name = f"{VLESS_EMOJI} VLESS | {security_info}" # New naming format
             profile_to_add = {
                 'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
                 'score': item['score'],
@@ -365,7 +396,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         elif "hy2://" in cleaned_profile_string:
             protocol = "hy2"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
-            beautiful_name = f"{HY2_EMOJI} HY2 - {security_info}"
+            beautiful_name = f"{HY2_EMOJI} HY2 | {security_info}" # New naming format
             profile_to_add = {
                 'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
                 'score': item['score'],
@@ -375,7 +406,8 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         elif "tuic://" in cleaned_profile_string:
             protocol = "tuic"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
-            beautiful_name = f"{TUIC_EMOJI} TUIC - QUIC"
+            beautiful_name = f"{TUIC_EMOJI} TUIC | QUIC" # New naming format
+            security_info = "QUIC" # For clarity in logs
             profile_to_add = {
                 'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
                 'score': item['score'],
@@ -385,25 +417,38 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         elif "trojan://" in cleaned_profile_string:
             protocol = "trojan"
             part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
-            beautiful_name = f"{TROJAN_EMOJI} TROJAN - {security_info}"
+            beautiful_name = f"{TROJAN_EMOJI} TROJAN | {security_info}" # New naming format
             profile_to_add = {
                 'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
                 'score': item['score'],
                 'date': item['date'],
                 'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
             }
+        elif "ss://" in cleaned_profile_string: # обработка ss://
+            protocol = "ss"
+            part_no_fragment, existing_fragment = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
+            beautiful_name = f"{SS_EMOJI} SS | Shadowsocks" # New naming format for Shadowsocks
+            security_info = "Shadowsocks" # For clarity in logs
+            profile_to_add = {
+                'profile': f"{part_no_fragment}#{beautiful_name}", # Новое оформление в фрагменте
+                'score': item['score'],
+                'date': item['date'],
+                'profile_name': beautiful_name # Сохраняем для потенциального использования, можно убрать если не нужно
+            }
+
         if profile_to_add:
             processed_profiles.append(profile_to_add)
+            logging.debug(f"Добавлен профиль {protocol} ({security_info}) с IP:Port {ip}:{port}") # Debug log
 
-    logging.info(f'Пытаемся удалить поврежденные конфигурации, дубликаты и фильтровать по свежести...')
+    logging.info(f'Пытаемся удалить поврежденные конфигурации, дубликаты, фильтровать по свежести и уникализировать по IP/порт...')
 
     unique_profiles_scored = []
-    seen_profiles = set()
+    seen_profiles = set() # Set for full profile string uniqueness (after IP/port uniqueness) - might not be needed anymore
     for profile_data in processed_profiles:
         profile = profile_data['profile']
         if profile not in seen_profiles and (len(profile) > 13) and (("…" in profile and "#" in profile) or ("…" not in profile)):
             unique_profiles_scored.append(profile_data)
-            seen_profiles.add(profile)
+            seen_profiles.add(profile) # Keeping this for now, but might be redundant after IP/Port uniqueness
 
     new_processed_profiles_scored = []
     for profile_data in unique_profiles_scored:
@@ -437,13 +482,14 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             time_difference = now - profile_data['date']
             if time_difference <= timedelta(days=PROFILE_FRESHNESS_DAYS):
                 fresh_profiles_scored.append(profile_data)
+                logging.debug(f"Сохранен свежий профиль (младше {PROFILE_FRESHNESS_DAYS} дней): дата {profile_data['date'].strftime('%Y-%m-%d %H:%M:%S UTC')}, профиль: {profile_data['profile'][:100]}...") # Debug log
             else:
                 logging.info(f"Удален устаревший профиль (старше {PROFILE_FRESHNESS_DAYS} дней): дата {profile_data['date'].strftime('%Y-%m-%d %H:%M:%S UTC')}, профиль: {profile_data['profile'][:100]}...")
         else:
             fresh_profiles_scored.append(profile_data)
 
     final_profiles_scored = fresh_profiles_scored
-    logging.info(f"После фильтрации по свежести осталось {len(final_profiles_scored)} профилей.")
+    logging.info(f"После фильтрации по свежести и уникализации осталось {len(final_profiles_scored)} профилей.")
 
     # Исправленная сортировка: если score равен None, используется 0
     final_profiles_scored.sort(key=lambda item: item.get('score') or 0, reverse=True)
@@ -451,7 +497,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
 class ChannelHistoryManager:
     """Менеджер для загрузки и сохранения истории каналов (неудач и 'Больше страниц не найдено')."""
-    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_HISTORY_FILE):
+    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_FILE):
         self.failure_file = failure_file
         self.no_more_pages_file = no_more_pages_file
 
