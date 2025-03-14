@@ -52,7 +52,7 @@ TROJAN_EMOJI = "🛡️"
 SS_EMOJI = "🧦"
 GEOIP_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.13/GeoLite2-Country.mmdb"
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
-UNKNOWN_LOCATION_EMOJI = "🏴‍☠️"
+UNKNOWN_LOCATION_EMOJI = "🏴‍☠️" # Pirate flag emoji for unknown location
 # --- End Global Constants ---
 
 if not os.path.exists('config-tg.txt'):
@@ -407,7 +407,13 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
             location_country = UNKNOWN_LOCATION_EMOJI # Default to pirate flag emoji
             if geoip_country_lookup_enabled and geoip_reader:
-                location_country = await get_country_name_from_ip(ip, geoip_reader)
+                location_country_name = await get_country_name_from_ip(ip, geoip_reader)
+                if location_country_name == "Unknown": # Explicitly replace "Unknown" string with emoji if GeoIP returns "Unknown"
+                    location_country = UNKNOWN_LOCATION_EMOJI
+                else:
+                    location_country = location_country_name
+            else:
+                location_country = UNKNOWN_LOCATION_EMOJI # Ensure default emoji is used when GeoIP is disabled
 
             if "vless://" in cleaned_profile_string:
                 part_no_fragment, _ = cleaned_profile_string.split('#', 1) if '#' in cleaned_profile_string else (cleaned_profile_string, "")
