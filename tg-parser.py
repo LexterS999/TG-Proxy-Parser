@@ -15,15 +15,15 @@ from bs4 import BeautifulSoup
 import urllib3
 import geoip2.database
 import aiofiles
-import ipaddress  # Import ipaddress module
+import ipaddress
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Constants ---
-MAX_THREADS_PARSING = 30
-REQUEST_TIMEOUT_AIOHTTP = 30
+MAX_THREADS_PARSING = 10
+REQUEST_TIMEOUT_AIOHTTP = 60
 MIN_PROFILES_TO_DOWNLOAD = 1000
 MAX_PROFILES_TO_DOWNLOAD = 200000
 ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan", "ss"}
@@ -37,11 +37,11 @@ PROFILE_SCORE_WEIGHTS = {
     "obfs": 1,
     "mport": 1,
 }
-MAX_FAILED_CHECKS = 9
+MAX_FAILED_CHECKS = 12
 FAILURE_HISTORY_FILE = 'channel_failure_history.json'
 NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'
-MAX_NO_MORE_PAGES_COUNT = 9
-PROFILE_FRESHNESS_DAYS = 7
+MAX_NO_MORE_PAGES_COUNT = 12
+PROFILE_FRESHNESS_DAYS = 30
 CONFIG_FILE = 'config.json'
 PROFILE_CLEANING_RULES_DEFAULT = []
 PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
