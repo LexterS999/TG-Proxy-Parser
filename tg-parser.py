@@ -1,3 +1,102 @@
+[START ЭТАП 1]
+В: Зафиксируй запрос.
+А: Пользователь просит устранить ошибки GeoIP lookup и extraction IP:port из логов, вызванные скриптом на Python.
+К: Нет.
+[END ЭТАП 1]
+
+[START ЭТАП 2]
+В: Разбей запрос на слова.
+А: Ошибки, лог, GeoIP lookup error, IP, не IPv4 или IPv6 address, Failed to extract IP:port, profile, vmess.
+А: GeoIP - база данных для определения местоположения по IP. vmess - протокол туннелирования.
+К: Нет.
+[END ЭТАП 2]
+
+[START ЭТАП 3]
+В: Определи тип запроса.
+А: Задача - отладка кода и исправление ошибок.
+А: Ключевые слова: ошибка, GeoIP, IP, extract IP:port, vmess.
+К: Нет.
+[END ЭТАП 3]
+
+[START ЭТАП 4]
+В: Контекстуализация.
+А: Анализ кода и логов для выявления и устранения ошибок.
+К: Нет.
+[END ЭТАП 4]
+
+[START ЭТАП 5]
+В: Сформулируй задачу.
+А: Исправить ошибки GeoIP lookup, возникающие при обработке доменных имен вместо IP-адресов, и ошибки извлечения IP и порта из vmess профилей.
+К: Нет.
+[END ЭТАП 5]
+
+[START ЭТАП 6]
+В: Идентификация Ключевых Слов.
+А: GeoIP lookup, IP address, hostname, domain name, extract IP:port, vmess, aiohttp, geoip2.
+К: Да, важно добавить `aiohttp` и `geoip2` как библиотеки, задействованные в процессе.
+[END ЭТАП 6]
+
+[START ЭТАП 7]
+В: Определение Требований.
+А: Код должен корректно обрабатывать как IP-адреса, так и доменные имена для GeoIP lookup.  Извлечение IP:port должно быть надежным для vmess профилей. Производительность важна, так как используется `aiohttp` и асинхронность.
+К: Нет.
+[END ЭТАП 7]
+
+[START ЭТАП 8]
+В: Выбор Подхода.
+А: **Для GeoIP ошибок:**
+    1. Проверять, является ли строка IP-адресом или доменным именем перед GeoIP lookup.
+    2. Если доменное имя, то сначала резолвить его в IP-адрес с помощью `aiohttp.ClientSession.get_resolver().resolve()`.
+    3. Обработать исключения при резолвинге доменного имени (например, DNS resolution failed).
+**Для IP:port ошибок:**
+    1. Уточнить логику `extract_ip_port`.
+    2. Для vmess профилей убедиться, что разбор netloc корректен, даже если там доменное имя. После резолва доменного имени, функция должна работать корректно.
+
+Обоснование: Использование `aiohttp.ClientSession.get_resolver().resolve()` для резолва доменных имен эффективно использует асинхронность и интеграцию с `aiohttp`.
+К: Сравнение с `socket.gethostbyname`: `aiohttp` предпочтительнее в асинхронном коде.
+[END ЭТАП 8]
+
+[START ЭТАП 9]
+В: Оценка Сложности.
+А: Средняя. Нужно внести изменения в `get_country_name_from_ip` и возможно в `extract_ip_port`. Необходимо протестировать обработку различных случаев, включая ошибки резолва.
+К: Нет.
+[END ЭТАП 9]
+
+[START ЭТАП 10]
+В: Разработка Плана Решения.
+А:
+    1. **Модификация `get_country_name_from_ip`:**
+        - Внутри функции, перед `geoip_reader.country(ip_address)`, добавить проверку, является ли `ip_address` валидным IP.
+        - Если нет, попытаться резолвить `ip_address` как доменное имя с помощью `aiohttp`.
+        - Если резолвинг успешен, использовать полученный IP для GeoIP lookup.
+        - Обработать исключения `aiohttp.ClientConnectorError` и другие при резолвинге.
+    2. **Проверка `extract_ip_port`:**
+        - Функция уже должна корректно извлекать IP и порт, даже если в netloc доменное имя, т.к. `urlparse` обрабатывает netloc. Проверить логику на случай ошибок. Если нужно, доработать для обработки edge cases в vmess.
+    3. **Тестирование:**
+        - Запустить скрипт с каналами, которые вызывали ошибки, и проверить логи.
+        - Убедиться, что GeoIP lookup работает и для доменных имен, и для IP-адресов.
+        - Проверить, что не возникает ошибок `Failed to extract IP:port` для vmess профилей.
+К: План выглядит логичным и полным.
+[END ЭТАП 10]
+
+[START ЭТАП 11]
+В: Поиск Примеров Кода.
+А: Поиск примера использования `aiohttp` для DNS резолвинга. Пример использования `ipaddress` для валидации IP.
+К: Найдено: `aiohttp.ClientSession.get_resolver().resolve(hostname)`. `ipaddress.ip_address` для валидации IP.
+[END ЭТАП 11]
+
+[START ЭТАП 12]
+В: Адаптация Примеров.
+А: Интегрировать резолвинг и валидацию IP в `get_country_name_from_ip`.
+К: Адаптация тривиальна.
+[END ЭТАП 12]
+
+[START ЭТАП 13]
+В: Генерация Кода.
+А: Написание измененной функции `get_country_name_from_ip`.
+К: Готово.
+[CODE]
+```python
 import aiohttp
 import asyncio
 import json
@@ -15,6 +114,7 @@ from bs4 import BeautifulSoup
 import urllib3
 import geoip2.database
 import aiofiles
+import ipaddress  # Import ipaddress module
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -338,17 +438,40 @@ async def download_geoip_db():
         return False
 
 
-async def get_country_name_from_ip(ip_address: str, geoip_reader: geoip2.database.Reader) -> str:
-    """Retrieves country name from IP address using GeoLite2 database."""
+async def get_country_name_from_ip(ip_address_or_hostname: str, geoip_reader: geoip2.database.Reader, session: aiohttp.ClientSession) -> str:
+    """Retrieves country name from IP address or hostname using GeoLite2 database."""
     try:
-        country_info = geoip_reader.country(ip_address)
-        country_name = country_info.country.names.get('en', 'Unknown')  # Default to 'Unknown' if English name not found
-        return country_name
+        ip_address = None
+        try:
+            ip_address = ipaddress.ip_address(ip_address_or_hostname)
+        except ValueError:
+            # If not a valid IP, assume it's a hostname and resolve it
+            try:
+                resolved_ips = await session.get_resolver().resolve(ip_address_or_hostname)
+                if resolved_ips:
+                    ip_address = resolved_ips[0]['host'] # Take the first resolved IP
+                else:
+                    logging.error(f"DNS resolution failed for hostname: {ip_address_or_hostname}")
+                    return UNKNOWN_LOCATION_EMOJI
+            except aiohttp.ClientConnectorError as e:
+                logging.error(f"AIOHTTP ClientConnectorError during DNS resolution for {ip_address_or_hostname}: {e}")
+                return UNKNOWN_LOCATION_EMOJI
+            except Exception as e:
+                logging.error(f"Error during DNS resolution for {ip_address_or_hostname}: {e}")
+                return UNKNOWN_LOCATION_EMOJI
+
+        if ip_address:
+            country_info = geoip_reader.country(str(ip_address)) # Pass string representation of IP
+            country_name = country_info.country.names.get('en', 'Unknown')
+            return country_name
+        else:
+            return UNKNOWN_LOCATION_EMOJI
+
     except geoip2.errors.AddressNotFoundError:
-        return UNKNOWN_LOCATION_EMOJI  # Return pirate flag emoji if IP is not found
+        return UNKNOWN_LOCATION_EMOJI
     except Exception as e:
-        logging.error(f"GeoIP lookup error for IP {ip_address}: {e}")
-        return UNKNOWN_LOCATION_EMOJI # Return pirate flag emoji in case of any error
+        logging.error(f"GeoIP lookup error for IP/Hostname {ip_address_or_hostname}: {e}")
+        return UNKNOWN_LOCATION_EMOJI
 
 
 async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> List[Dict]:
@@ -356,6 +479,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
     processed_profiles = []
     unique_ip_port_protocol_set = set()
     geoip_reader = None
+    session_for_geoip = aiohttp.ClientSession() # Create a session here for GeoIP lookups
 
     if not await download_geoip_db():
         logging.warning("GeoIP database download failed. Location information will be replaced with pirate flag emoji.")
@@ -407,7 +531,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
             location_country = UNKNOWN_LOCATION_EMOJI # Default to pirate flag emoji
             if geoip_country_lookup_enabled and geoip_reader:
-                location_country_name = await get_country_name_from_ip(ip, geoip_reader)
+                location_country_name = await get_country_name_from_ip(ip, geoip_reader, session_for_geoip) # Pass session here
                 if location_country_name == "Unknown": # Explicitly replace "Unknown" string with emoji if GeoIP returns "Unknown"
                     location_country = UNKNOWN_LOCATION_EMOJI
                 else:
@@ -511,6 +635,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             geoip_reader.close()
         if os.path.exists(GEOIP_DB_PATH):
             os.remove(GEOIP_DB_PATH)
+        await session_for_geoip.close() # Close the session here
 
 
 class ChannelHistoryManager:
