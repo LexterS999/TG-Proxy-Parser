@@ -22,10 +22,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Constants ---
-MAX_THREADS_PARSING = 100
+MAX_THREADS_PARSING = 30
 REQUEST_TIMEOUT_AIOHTTP = 30
-MIN_PROFILES_TO_DOWNLOAD = 100
-MAX_PROFILES_TO_DOWNLOAD = 20000
+MIN_PROFILES_TO_DOWNLOAD = 1000
+MAX_PROFILES_TO_DOWNLOAD = 200000
 ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan", "ss"}
 PROFILE_SCORE_WEIGHTS = {
     "security": 2,
@@ -37,11 +37,11 @@ PROFILE_SCORE_WEIGHTS = {
     "obfs": 1,
     "mport": 1,
 }
-MAX_FAILED_CHECKS = 4
+MAX_FAILED_CHECKS = 9
 FAILURE_HISTORY_FILE = 'channel_failure_history.json'
 NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'
-MAX_NO_MORE_PAGES_COUNT = 4
-PROFILE_FRESHNESS_DAYS = 4
+MAX_NO_MORE_PAGES_COUNT = 9
+PROFILE_FRESHNESS_DAYS = 7
 CONFIG_FILE = 'config.json'
 PROFILE_CLEANING_RULES_DEFAULT = []
 PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
@@ -53,7 +53,7 @@ TROJAN_EMOJI = "🛡️"
 SS_EMOJI = "🧦"
 GEOIP_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.13/GeoLite2-Country.mmdb"
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
-UNKNOWN_LOCATION_EMOJI = "🏴‍☠️" # Pirate flag emoji for unknown location
+UNKNOWN_LOCATION_EMOJI = "🏴‍☠️"
 # --- End Global Constants ---
 
 if not os.path.exists('config-tg.txt'):
