@@ -52,6 +52,7 @@ TROJAN_EMOJI = "🛡️"
 SS_EMOJI = "🧦"
 GEOIP_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.13/GeoLite2-Country.mmdb"
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
+UNKNOWN_LOCATION_EMOJI = "🏴‍☠️"
 # --- End Global Constants ---
 
 if not os.path.exists('config-tg.txt'):
@@ -344,27 +345,27 @@ async def get_country_name_from_ip(ip_address: str, geoip_reader: geoip2.databas
         country_name = country_info.country.names.get('en', 'Unknown')  # Default to 'Unknown' if English name not found
         return country_name
     except geoip2.errors.AddressNotFoundError:
-        return "Unknown Location"  # Handle cases where IP is not found in the database
+        return UNKNOWN_LOCATION_EMOJI  # Return pirate flag emoji if IP is not found
     except Exception as e:
         logging.error(f"GeoIP lookup error for IP {ip_address}: {e}")
-        return "Unknown Location"
+        return UNKNOWN_LOCATION_EMOJI # Return pirate flag emoji in case of any error
 
 
 async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> List[Dict]:
     """Processes parsed profiles: cleaning, deduplication, filtering, naming with GeoIP."""
     processed_profiles = []
     unique_ip_port_protocol_set = set()
-    geoip_reader = None  # Initialize outside try block
+    geoip_reader = None
 
-    if not await download_geoip_db(): # Download DB before processing
-        logging.warning("GeoIP database download failed. Location information will be unavailable.")
-        geoip_country_lookup_enabled = False # Disable lookup if DB download fails
+    if not await download_geoip_db():
+        logging.warning("GeoIP database download failed. Location information will be replaced with pirate flag emoji.")
+        geoip_country_lookup_enabled = False
     else:
-        geoip_country_lookup_enabled = True # Enable lookup if DB download succeeds
+        geoip_country_lookup_enabled = True
 
     try:
         if geoip_country_lookup_enabled:
-            geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH) # Load DB here, inside try block for error handling
+            geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH)
 
         for item in parsed_profiles_list:
             cleaned_profile_string = clean_profile(item['profile'])
@@ -404,8 +405,8 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             if params.get("security", [""])[0] == "tls":
                 security_info = "TLS"
 
-            location_country = "Unknown Location" # Default value if GeoIP fails or is disabled
-            if geoip_country_lookup_enabled and geoip_reader: # Perform lookup only if enabled and reader is valid
+            location_country = UNKNOWN_LOCATION_EMOJI # Default to pirate flag emoji
+            if geoip_country_lookup_enabled and geoip_reader:
                 location_country = await get_country_name_from_ip(ip, geoip_reader)
 
             if "vless://" in cleaned_profile_string:
@@ -458,7 +459,8 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
             if profile_to_add:
                 processed_profiles.append(profile_to_add)
-                logging.debug(f"Added profile {protocol} ({security_info}) IP:Port {ip}:{port} Location: {location_country}")
+                security_log_info = f"({security_info})" if security_info != location_country else "" # Avoid duplicate location in log if it's Unknown Location Emoji
+                logging.debug(f"Added profile {protocol} {security_log_info} IP:Port {ip}:{port} Location: {location_country}")
 
         logging.info(f'Final profile processing: deduplication, freshness filtering...')
 
@@ -498,12 +500,11 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         final_profiles_scored.sort(key=lambda item: item.get('score') or 0, reverse=True)
         return final_profiles_scored
 
-    finally: # Ensure database reader is closed and file is deleted
+    finally:
         if geoip_reader:
             geoip_reader.close()
         if os.path.exists(GEOIP_DB_PATH):
             os.remove(GEOIP_DB_PATH)
-            logging.info(f"GeoIP database file {GEOIP_DB_PATH} removed.")
 
 
 class ChannelHistoryManager:
