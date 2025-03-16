@@ -550,7 +550,7 @@ async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, t
         logging.debug(f"Proxy speed check failed for {proxy_url}: {e}")
         return None
 
-@lru_cache(maxsize=1024, ttl=60) # Caching validation results for 60 seconds
+@lru_cache(maxsize=1024) # Caching validation results, TTL removed for Python versions < 3.9
 async def _cached_validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
     """Cached validation and scoring of proxy profile."""
     return await _validate_and_score_profile(profile_data, session, validation_score_weights)
@@ -745,7 +745,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 class ChannelHistoryManager:
     """Manages channel history (failures, 'No More Pages') with asynchronous file operations."""
 
-    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_HISTORY_FILE):
+    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_FILE):
         """Initializes ChannelHistoryManager."""
         self.failure_file = failure_file
         self.no_more_pages_file = no_more_pages_file
