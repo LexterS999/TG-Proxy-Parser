@@ -18,7 +18,7 @@ import urllib3
 import geoip2.database
 import aiofiles
 import ipaddress
-import certifi # Import certifi - although we might not need it explicitly after correction
+import certifi
 import gzip
 from tqdm.asyncio import tqdm_asyncio
 
@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Constants ---
-MAX_THREADS_PARSING = 10
+MAX_THREADS_PARSING = 10 # Experiment with increasing this value carefully
 REQUEST_TIMEOUT_AIOHTTP = 60
 MIN_PROFILES_TO_DOWNLOAD = 1000
 MAX_PROFILES_TO_DOWNLOAD = 200000
@@ -60,8 +60,10 @@ PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
 MAX_RETRIES_FETCH_PAGE = 3
 RETRY_DELAY_BASE_FETCH_PAGE = 2
 DNS_TIMEOUT = 5.0
-VALIDATION_TIMEOUT = 10.0
-VALIDATION_TEST_URL = "http://httpbin.org/ip"  # Using HTTP for simplicity, can be HTTPS as well
+VALIDATION_TIMEOUT = 10.0 # Default validation timeout
+VALIDATION_ANONYMITY_TIMEOUT = 7.0 # Reduced timeout for anonymity check
+VALIDATION_SPEED_TIMEOUT = 5.0 # Reduced timeout for speed check
+VALIDATION_TEST_URL = "http://httpbin.org/ip"
 
 VLESS_EMOJI = "🌠"
 HY2_EMOJI = "⚡"
@@ -138,13 +140,6 @@ def json_save(data: dict, path: str, indent: int = 4, backup: bool = True, compr
 def calculate_profile_score(profile: str, score_weights: Dict[str, int] = PROFILE_SCORE_WEIGHTS) -> int:
     """
     Calculates profile score based on configuration parameters and provided score weights.
-
-    Args:
-        profile: The profile string to score.
-        score_weights: A dictionary of weights for different profile parameters. Defaults to PROFILE_SCORE_WEIGHTS.
-
-    Returns:
-        The calculated score for the profile. Returns 0 if the protocol is not allowed or an error occurs.
     """
     protocol = profile.split("://")[0]
     if protocol not in ALLOWED_PROTOCOLS:
@@ -204,7 +199,7 @@ async def fetch_channel_page_async(session: aiohttp.ClientSession, channel_url: 
     """Asynchronously fetches a channel page with retry logic and SSL verification."""
     for attempt_num in range(attempt, max_retries):
         try:
-            async with session.get(f'https://t.me/s/{channel_url}', timeout=REQUEST_TIMEOUT_AIOHTTP, ssl=True) as response: # Changed ssl=certifi.where() to ssl=True
+            async with session.get(f'https://t.me/s/{channel_url}', timeout=REQUEST_TIMEOUT_AIOHTTP, ssl=True) as response:
                 response.raise_for_status()
                 return await response.text()
         except aiohttp.ClientResponseError as http_err:
@@ -241,7 +236,7 @@ async def fetch_channel_page_async(session: aiohttp.ClientSession, channel_url: 
 
 
 async def parse_profiles_from_page_async(html_page: str, channel_url: str, allowed_protocols: Set[str], profile_score_func) -> List[Dict]:
-    """Asynchronously parses profiles from an HTML page with improved HTML cleaning."""
+    """Asynchronously parses profiles from an HTML page with improved HTML cleaning and pre-filtering."""
     channel_profiles = []
     soup = BeautifulSoup(html_page, 'html.parser')
     message_blocks = soup.find_all('div', class_='tgme_widget_message')
@@ -262,15 +257,20 @@ async def parse_profiles_from_page_async(html_page: str, channel_url: str, allow
             code_content_lines = code_content.splitlines()
             for line in code_content_lines:
                 cleaned_content = line.strip()
+                # --- Предварительная фильтрация: проверяем, начинается ли строка с нужного протокола ---
+                is_profile_line = False
                 for protocol in allowed_protocols:
-                    if f"{protocol}://" in cleaned_content:
-                        profile_link = cleaned_content
-                        score = profile_score_func(profile_link)
-                        channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
+                    if cleaned_content.startswith(f"{protocol}://"):
+                        is_profile_line = True
+                        break
+                if is_profile_line:
+                    profile_link = cleaned_content
+                    score = profile_score_func(profile_link)
+                    channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
     return channel_profiles
 
 
-async def _fetch_all_channel_pages(channel_url: str) -> tuple[List[str], bool, bool]: # Removed session parameter
+async def _fetch_all_channel_pages(channel_url: str) -> tuple[List[str], bool, bool]:
     """Fetches all pages for a given channel."""
     html_pages = []
     current_url = channel_url
@@ -278,7 +278,7 @@ async def _fetch_all_channel_pages(channel_url: str) -> tuple[List[str], bool, b
     no_more_pages_in_run = False
     failed_check = False
 
-    async with aiohttp.ClientSession() as session: # Use async with to create and manage session
+    async with aiohttp.ClientSession() as session:
         for attempt in range(2):
             while True:
                 html_page = await fetch_channel_page_async(session, current_url, attempt + 1)
@@ -337,7 +337,7 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
     """Asynchronously processes a Telegram channel to extract profiles."""
     async with thread_semaphore:
         try:
-            html_pages, no_more_pages_in_run, failed_check = await _fetch_all_channel_pages(channel_url) # Removed session from here
+            html_pages, no_more_pages_in_run, failed_check = await _fetch_all_channel_pages(channel_url)
 
             if not html_pages and failed_check:
                 logging.warning(f"Failed to load pages for {channel_url} after retries. Skipping channel.")
@@ -422,7 +422,7 @@ async def download_geoip_db():
 
     logging.info(f"Downloading GeoIP database from {GEOIP_DB_URL} to {GEOIP_DB_PATH}...")
     try:
-        async with aiohttp.ClientSession() as session: # Use async with for session
+        async with aiohttp.ClientSession() as session:
             async with session.get(GEOIP_DB_URL) as response:
                 if response.status == 200:
                     total_size = int(response.headers.get('Content-Length', 0))
@@ -462,9 +462,9 @@ def _cached_geoip_country_lookup(geoip_reader: geoip2.database.Reader, ip_str: s
 
 
 @lru_cache(maxsize=1024)
-async def _cached_dns_resolve(hostname: str, dns_timeout: float = DNS_TIMEOUT) -> Optional[str]: # Removed session parameter
+async def _cached_dns_resolve(hostname: str, dns_timeout: float = DNS_TIMEOUT) -> Optional[str]:
     """Cached DNS resolution."""
-    async with aiohttp.ClientSession() as session: # Use async with for session
+    async with aiohttp.ClientSession() as session:
         try:
             resolved_ips = await session.get_resolver().resolve(hostname, timeout=dns_timeout)
             if resolved_ips:
@@ -490,7 +490,7 @@ async def get_country_name_from_ip(ip_address_or_hostname: str, geoip_reader: ge
         try:
             ip_address = ipaddress.ip_address(ip_address_or_hostname)
         except ValueError:
-            resolved_ip_str = await _cached_dns_resolve(ip_address_or_hostname, dns_timeout=dns_timeout) # Removed session from here
+            resolved_ip_str = await _cached_dns_resolve(ip_address_or_hostname, dns_timeout=dns_timeout)
             if resolved_ip_str:
                 ip_address = ipaddress.ip_address(resolved_ip_str)
             else:
@@ -518,7 +518,7 @@ async def _validate_proxy_availability(session: aiohttp.ClientSession, proxy_url
         logging.debug(f"Proxy availability check failed for {proxy_url}: {e}")
         return False
 
-async def _validate_proxy_anonymity(session: aiohttp.ClientSession, proxy_url: str, timeout: float = VALIDATION_TIMEOUT) -> bool:
+async def _validate_proxy_anonymity(session: aiohttp.ClientSession, proxy_url: str, timeout: float = VALIDATION_ANONYMITY_TIMEOUT) -> bool: # Reduced timeout
     """Validates proxy anonymity."""
     try:
         logging.debug(f"Validating anonymity for proxy: {proxy_url}")
@@ -526,26 +526,23 @@ async def _validate_proxy_anonymity(session: aiohttp.ClientSession, proxy_url: s
             headers_json = await response.json()
             proxy_origin = headers_json.get("origin")
             if proxy_origin:
-                # origin contains the IP address. If it's a comma-separated list, the first IP is usually the proxy IP.
                 proxy_ip = proxy_origin.split(',')[0].strip()
                 logging.debug(f"Proxy IP: {proxy_ip}")
-                # To truly check anonymity, you'd need to know your external IP *before* using the proxy
-                # For simplicity, we'll assume that if 'origin' header exists, it's anonymous enough for basic needs.
                 return True
             else:
                 logging.warning(f"Could not determine proxy IP from 'origin' header for {proxy_url}.")
-                return False # Cannot reliably determine anonymity
+                return False
     except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
         logging.debug(f"Proxy anonymity check failed for {proxy_url}: {e}")
         return False
 
-async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, timeout: float = VALIDATION_TIMEOUT) -> Optional[float]:
+async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, timeout: float = VALIDATION_SPEED_TIMEOUT) -> Optional[float]: # Reduced timeout
     """Measures proxy response speed."""
     start_time = time.perf_counter()
     try:
         logging.debug(f"Measuring speed for proxy: {proxy_url}")
         async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
-            await response.read() # Ensure body is read to measure full response time
+            await response.read()
             response_time = time.perf_counter() - start_time
             logging.debug(f"Proxy {proxy_url} response time: {response_time:.2f}s")
             return response_time
@@ -553,10 +550,16 @@ async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, t
         logging.debug(f"Proxy speed check failed for {proxy_url}: {e}")
         return None
 
+@lru_cache(maxsize=1024, ttl=60) # Caching validation results for 60 seconds
+async def _cached_validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
+    """Cached validation and scoring of proxy profile."""
+    return await _validate_and_score_profile(profile_data, session, validation_score_weights)
+
+
 async def _validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
     """Validates proxy profile and calculates validation score."""
     profile_string = profile_data['profile']
-    proxy_url = profile_string # Proxy URL is the profile string itself
+    proxy_url = profile_string
 
     availability = await _validate_proxy_availability(session, proxy_url)
     anonymity = await _validate_proxy_anonymity(session, proxy_url)
@@ -567,15 +570,15 @@ async def _validate_and_score_profile(profile_data: Dict, session: aiohttp.Clien
         validation_score += validation_score_weights.get("availability", 0)
     if anonymity:
         validation_score += validation_score_weights.get("anonymity", 0)
-    if speed is not None: # Speed is measured, not just a boolean pass/fail
-        if speed < 2.0: # Example threshold, can be configurable
+    if speed is not None:
+        if speed < 2.0:
             validation_score += validation_score_weights.get("speed", 0)
 
     logging.debug(f"Validation results for {profile_string[:100]}...: Availability: {availability}, Anonymity: {anonymity}, Speed: {speed:.2f}s, Validation Score: {validation_score}")
 
-    if availability: # Basic availability is mandatory for a valid proxy
+    if availability:
         profile_data['validation_score'] = validation_score
-        profile_data['final_score'] = profile_data['score'] + validation_score # Combine profile score and validation score
+        profile_data['final_score'] = profile_data['score'] + validation_score
         return profile_data
     else:
         logging.info(f"Profile failed validation (availability): {profile_string[:100]}...")
@@ -606,13 +609,38 @@ def _deduplicate_profiles_by_ip_port_protocol(profiles: List[Dict]) -> List[Dict
     return unique_profiles
 
 
+async def _batch_geoip_country_lookup(geoip_reader: geoip2.database.Reader, ip_list: List[str]) -> Dict[str, str]:
+    """Batch GeoIP lookup for a list of IP addresses."""
+    country_name_map = {}
+    try:
+        for ip_str in ip_list:
+            try:
+                country_info = geoip_reader.country(ip_str)
+                country_name = country_info.country.names.get('en', 'Unknown')
+                country_name_map[ip_str] = country_name
+            except geoip2.errors.AddressNotFoundError:
+                country_name_map[ip_str] = UNKNOWN_LOCATION_EMOJI
+            except Exception as e:
+                logging.error(f"GeoIP lookup error for IP {ip_str} (batch function): {e}")
+                country_name_map[ip_str] = UNKNOWN_LOCATION_EMOJI
+    except Exception as batch_err:
+        logging.error(f"Batch GeoIP lookup failed: {batch_err}")
+    return country_name_map
+
+
 async def _enrich_profiles_with_geoip(profiles: List[Dict], geoip_reader: geoip2.database.Reader, session: aiohttp.ClientSession) -> List[Dict]:
-    """Enriches profiles with GeoIP information and creates beautiful names."""
+    """Enriches profiles with GeoIP information and creates beautiful names using batch GeoIP lookup."""
     enriched_profiles = []
+    geoip_country_lookup_enabled = bool(geoip_reader) # Check if geoip_reader is valid
+
+    if geoip_country_lookup_enabled:
+        ip_addresses = [profile_data['ip'] for profile_data in profiles]
+        country_name_map = await _batch_geoip_country_lookup(geoip_reader, ip_addresses)
+
     for profile_data in profiles:
         location_country = UNKNOWN_LOCATION_EMOJI
-        if geoip_reader:
-            location_country_name = await get_country_name_from_ip(profile_data['ip'], geoip_reader, session)
+        if geoip_country_lookup_enabled:
+            location_country_name = country_name_map.get(profile_data['ip'], UNKNOWN_LOCATION_EMOJI)
             location_country = location_country_name if location_country_name != "Unknown" else UNKNOWN_LOCATION_EMOJI
 
         protocol = profile_data['profile'].split("://")[0]
@@ -662,15 +690,15 @@ def _filter_and_sort_profiles(profiles: List[Dict]) -> List[Dict]:
             fresh_profiles_scored.append(profile_data)
 
     final_profiles_scored = fresh_profiles_scored
-    final_profiles_scored.sort(key=lambda item: item.get('final_score') or 0, reverse=True) # Sort by final_score
+    final_profiles_scored.sort(key=lambda item: item.get('final_score') or 0, reverse=True)
     return final_profiles_scored
 
 
 async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> List[Dict]:
-    """Processes parsed profiles: cleaning, deduplication, validation, filtering, naming with GeoIP."""
+    """Processes parsed profiles: cleaning, deduplication, validation, filtering, naming with GeoIP - Optimized for speed."""
     processed_profiles = []
     geoip_reader = None
-    geoip_country_lookup_enabled = True # Initialize to True, will be set to False if download fails
+    geoip_country_lookup_enabled = True
 
     if not await download_geoip_db():
         logging.warning("GeoIP database download failed. Location information will be replaced with pirate flag emoji.")
@@ -683,19 +711,24 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         cleaned_extracted_profiles = await _clean_and_extract_profiles(parsed_profiles_list)
         deduplicated_profiles = _deduplicate_profiles_by_ip_port_protocol(cleaned_extracted_profiles)
 
+        # --- Parallelized Validation using asyncio.gather ---
         validated_profiles = []
-        async with aiohttp.ClientSession() as session_for_validation: # Use async with for validation session
-            for profile_data in deduplicated_profiles:
-                validated_profile_data = await _validate_and_score_profile(profile_data, session_for_validation, VALIDATION_SCORE_WEIGHTS)
-                if validated_profile_data:
-                    validated_profiles.append(validated_profile_data)
+        async with aiohttp.ClientSession() as session_for_validation:
+            validation_tasks = [
+                _cached_validate_and_score_profile(profile_data, session_for_validation, VALIDATION_SCORE_WEIGHTS) # Using cached validation function
+                for profile_data in deduplicated_profiles
+            ]
+            validated_profiles = await asyncio.gather(*validation_tasks)
+            validated_profiles = [profile for profile in validated_profiles if profile is not None] # Filter out None results
+        # --- End Parallelized Validation ---
+
 
         enriched_profiles = []
         if geoip_country_lookup_enabled:
-            async with aiohttp.ClientSession() as session_for_geoip: # Use async with for geoip session
+            async with aiohttp.ClientSession() as session_for_geoip:
                 enriched_profiles = await _enrich_profiles_with_geoip(validated_profiles, geoip_reader, session_for_geoip) # Use validated profiles
         else:
-            enriched_profiles = validated_profiles # If geoip is disabled, just use validated profiles
+            enriched_profiles = validated_profiles
 
         final_profiles_scored = _filter_and_sort_profiles(enriched_profiles)
 
@@ -794,7 +827,7 @@ async def load_channels_async(channels_file: str = 'telegram_channels.json') -> 
 
     if telegram_channel_names_original is None:
         logging.critical(f"Failed to load channel list from {channels_file}. Please check the file or configuration.")
-        return None  # Return None to indicate failure
+        return None
 
     if not isinstance(telegram_channel_names_original, list):
         logging.critical(f"Invalid format in {channels_file}. Expected a JSON list of strings. Exiting.")
@@ -915,7 +948,7 @@ async def main_async():
         logging.info(f'Loading configuration from {CONFIG_FILE}...')
         config_data = json_load(CONFIG_FILE)
         if config_data:
-            global PROFILE_SCORE_WEIGHTS, PROFILE_CLEANING_RULES, PROFILE_FRESHNESS_DAYS, MAX_FAILED_CHECKS, MAX_NO_MORE_PAGES_COUNT, MAX_THREADS_PARSING, REQUEST_TIMEOUT_AIOHTTP, MIN_PROFILES_TO_DOWNLOAD, MAX_PROFILES_TO_DOWNLOAD, MAX_RETRIES_FETCH_PAGE, RETRY_DELAY_BASE_FETCH_PAGE, DNS_TIMEOUT, VALIDATION_TIMEOUT, VALIDATION_TEST_URL, VALIDATION_SCORE_WEIGHTS
+            global PROFILE_SCORE_WEIGHTS, PROFILE_CLEANING_RULES, PROFILE_FRESHNESS_DAYS, MAX_FAILED_CHECKS, MAX_NO_MORE_PAGES_COUNT, MAX_THREADS_PARSING, REQUEST_TIMEOUT_AIOHTTP, MIN_PROFILES_TO_DOWNLOAD, MAX_PROFILES_TO_DOWNLOAD, MAX_RETRIES_FETCH_PAGE, RETRY_DELAY_BASE_FETCH_PAGE, DNS_TIMEOUT, VALIDATION_TIMEOUT, VALIDATION_TEST_URL, VALIDATION_SCORE_WEIGHTS, VALIDATION_ANONYMITY_TIMEOUT, VALIDATION_SPEED_TIMEOUT
             PROFILE_SCORE_WEIGHTS = config_data.get('profile_score_weights', PROFILE_SCORE_WEIGHTS_DEFAULT)
             PROFILE_CLEANING_RULES = config_data.get('profile_cleaning_rules', PROFILE_CLEANING_RULES_DEFAULT)
             PROFILE_FRESHNESS_DAYS = config_data.get('profile_freshness_days', PROFILE_FRESHNESS_DAYS)
@@ -931,6 +964,9 @@ async def main_async():
             VALIDATION_TIMEOUT = config_data.get('validation_timeout', VALIDATION_TIMEOUT)
             VALIDATION_TEST_URL = config_data.get('validation_test_url', VALIDATION_TEST_URL)
             VALIDATION_SCORE_WEIGHTS = config_data.get('validation_score_weights', VALIDATION_SCORE_WEIGHTS_DEFAULT)
+            VALIDATION_ANONYMITY_TIMEOUT = config_data.get('validation_anonymity_timeout', VALIDATION_ANONYMITY_TIMEOUT) # Load specific timeouts from config
+            VALIDATION_SPEED_TIMEOUT = config_data.get('validation_speed_timeout', VALIDATION_SPEED_TIMEOUT) # Load specific timeouts from config
+
 
             logging.info(f'Configuration loaded.')
         else:
@@ -938,7 +974,7 @@ async def main_async():
 
         start_time = datetime.now()
         telegram_channel_names_original = await load_channels_async()
-        if telegram_channel_names_original is None: # Check if load_channels_async returned None
+        if telegram_channel_names_original is None:
             logging.critical("Failed to load Telegram channel names. Exiting.")
             exit(1)
 
