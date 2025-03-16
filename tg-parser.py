@@ -18,9 +18,9 @@ import urllib3
 import geoip2.database
 import aiofiles
 import ipaddress
-import certifi
+import certifi # Import certifi - although we might not need it explicitly after correction
 import gzip
-from tqdm.asyncio import tqdm_asyncio # Import tqdm_asyncio
+from tqdm.asyncio import tqdm_asyncio
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -204,7 +204,7 @@ async def fetch_channel_page_async(session: aiohttp.ClientSession, channel_url: 
     """Asynchronously fetches a channel page with retry logic and SSL verification."""
     for attempt_num in range(attempt, max_retries):
         try:
-            async with session.get(f'https://t.me/s/{channel_url}', timeout=REQUEST_TIMEOUT_AIOHTTP, ssl=certifi.where()) as response:
+            async with session.get(f'https://t.me/s/{channel_url}', timeout=REQUEST_TIMEOUT_AIOHTTP, ssl=True) as response: # Changed ssl=certifi.where() to ssl=True
                 response.raise_for_status()
                 return await response.text()
         except aiohttp.ClientResponseError as http_err:
@@ -270,7 +270,7 @@ async def parse_profiles_from_page_async(html_page: str, channel_url: str, allow
     return channel_profiles
 
 
-async def _fetch_all_channel_pages(session: aiohttp.ClientSession, channel_url: str) -> tuple[List[str], bool, bool]:
+async def _fetch_all_channel_pages(channel_url: str) -> tuple[List[str], bool, bool]: # Removed session parameter
     """Fetches all pages for a given channel."""
     html_pages = []
     current_url = channel_url
@@ -278,23 +278,24 @@ async def _fetch_all_channel_pages(session: aiohttp.ClientSession, channel_url: 
     no_more_pages_in_run = False
     failed_check = False
 
-    for attempt in range(2):
-        while True:
-            html_page = await fetch_channel_page_async(session, current_url, attempt + 1)
-            if html_page:
-                html_pages.append(html_page)
-                last_datbef = re.findall(pattern_datbef, html_page)
-                if not last_datbef:
-                    logging.info(f"No more pages found for {channel_url}")
-                    no_more_pages_in_run = True
+    async with aiohttp.ClientSession() as session: # Use async with to create and manage session
+        for attempt in range(2):
+            while True:
+                html_page = await fetch_channel_page_async(session, current_url, attempt + 1)
+                if html_page:
+                    html_pages.append(html_page)
+                    last_datbef = re.findall(pattern_datbef, html_page)
+                    if not last_datbef:
+                        logging.info(f"No more pages found for {channel_url}")
+                        no_more_pages_in_run = True
+                        return html_pages, no_more_pages_in_run, failed_check
+                    current_url = f'{channel_url}?before={last_datbef[0]}'
+                else:
+                    failed_check = True
+                    logging.warning(f"Failed to fetch page for {channel_url} on attempt {attempt+1}.")
                     return html_pages, no_more_pages_in_run, failed_check
-                current_url = f'{channel_url}?before={last_datbef[0]}'
-            else:
-                failed_check = True
-                logging.warning(f"Failed to fetch page for {channel_url} on attempt {attempt+1}.")
-                return html_pages, no_more_pages_in_run, failed_check
-    logging.error(f"Failed to load pages for {channel_url} after retries.")
-    return html_pages, no_more_pages_in_run, failed_check
+        logging.error(f"Failed to load pages for {channel_url} after retries.")
+        return html_pages, no_more_pages_in_run, failed_check
 
 
 async def _extract_profiles_from_pages(html_pages: List[str], channel_url: str, allowed_protocols: Set[str], profile_score_func) -> List[Dict]:
@@ -336,7 +337,7 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
     """Asynchronously processes a Telegram channel to extract profiles."""
     async with thread_semaphore:
         try:
-            html_pages, no_more_pages_in_run, failed_check = await _fetch_all_channel_pages(aiohttp.ClientSession(), channel_url)
+            html_pages, no_more_pages_in_run, failed_check = await _fetch_all_channel_pages(channel_url) # Removed session from here
 
             if not html_pages and failed_check:
                 logging.warning(f"Failed to load pages for {channel_url} after retries. Skipping channel.")
@@ -421,7 +422,7 @@ async def download_geoip_db():
 
     logging.info(f"Downloading GeoIP database from {GEOIP_DB_URL} to {GEOIP_DB_PATH}...")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session: # Use async with for session
             async with session.get(GEOIP_DB_URL) as response:
                 if response.status == 200:
                     total_size = int(response.headers.get('Content-Length', 0))
@@ -461,24 +462,25 @@ def _cached_geoip_country_lookup(geoip_reader: geoip2.database.Reader, ip_str: s
 
 
 @lru_cache(maxsize=1024)
-async def _cached_dns_resolve(session: aiohttp.ClientSession, hostname: str, dns_timeout: float = DNS_TIMEOUT) -> Optional[str]:
+async def _cached_dns_resolve(hostname: str, dns_timeout: float = DNS_TIMEOUT) -> Optional[str]: # Removed session parameter
     """Cached DNS resolution."""
-    try:
-        resolved_ips = await session.get_resolver().resolve(hostname, timeout=dns_timeout)
-        if resolved_ips:
-            return resolved_ips[0]['host']
-        else:
-            logging.warning(f"DNS resolution failed for hostname: {hostname} (cached function), no IPs resolved.")
+    async with aiohttp.ClientSession() as session: # Use async with for session
+        try:
+            resolved_ips = await session.get_resolver().resolve(hostname, timeout=dns_timeout)
+            if resolved_ips:
+                return resolved_ips[0]['host']
+            else:
+                logging.warning(f"DNS resolution failed for hostname: {hostname} (cached function), no IPs resolved.")
+                return None
+        except aiohttp.ClientConnectorError as e:
+            logging.error(f"AIOHTTP ClientConnectorError during DNS resolution for {hostname} (cached function): {e}")
             return None
-    except aiohttp.ClientConnectorError as e:
-        logging.error(f"AIOHTTP ClientConnectorError during DNS resolution for {hostname} (cached function): {e}")
-        return None
-    except asyncio.TimeoutError:
-        logging.warning(f"DNS resolution timeout for hostname: {hostname} (cached function).")
-        return None
-    except Exception as e:
-        logging.error(f"Error during DNS resolution for {hostname} (cached function): {e}")
-        return None
+        except asyncio.TimeoutError:
+            logging.warning(f"DNS resolution timeout for hostname: {hostname} (cached function).")
+            return None
+        except Exception as e:
+            logging.error(f"Error during DNS resolution for {hostname} (cached function): {e}")
+            return None
 
 
 async def get_country_name_from_ip(ip_address_or_hostname: str, geoip_reader: geoip2.database.Reader, session: aiohttp.ClientSession, dns_timeout: float = DNS_TIMEOUT) -> str:
@@ -488,7 +490,7 @@ async def get_country_name_from_ip(ip_address_or_hostname: str, geoip_reader: ge
         try:
             ip_address = ipaddress.ip_address(ip_address_or_hostname)
         except ValueError:
-            resolved_ip_str = await _cached_dns_resolve(session, ip_address_or_hostname, dns_timeout=dns_timeout)
+            resolved_ip_str = await _cached_dns_resolve(ip_address_or_hostname, dns_timeout=dns_timeout) # Removed session from here
             if resolved_ip_str:
                 ip_address = ipaddress.ip_address(resolved_ip_str)
             else:
@@ -668,14 +670,11 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
     """Processes parsed profiles: cleaning, deduplication, validation, filtering, naming with GeoIP."""
     processed_profiles = []
     geoip_reader = None
-    session_for_geoip = aiohttp.ClientSession()
-    session_for_validation = aiohttp.ClientSession() # Separate session for validation to control settings
+    geoip_country_lookup_enabled = True # Initialize to True, will be set to False if download fails
 
     if not await download_geoip_db():
         logging.warning("GeoIP database download failed. Location information will be replaced with pirate flag emoji.")
         geoip_country_lookup_enabled = False
-    else:
-        geoip_country_lookup_enabled = True
 
     try:
         if geoip_country_lookup_enabled:
@@ -685,12 +684,19 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         deduplicated_profiles = _deduplicate_profiles_by_ip_port_protocol(cleaned_extracted_profiles)
 
         validated_profiles = []
-        for profile_data in deduplicated_profiles:
-            validated_profile_data = await _validate_and_score_profile(profile_data, session_for_validation, VALIDATION_SCORE_WEIGHTS)
-            if validated_profile_data:
-                validated_profiles.append(validated_profile_data)
+        async with aiohttp.ClientSession() as session_for_validation: # Use async with for validation session
+            for profile_data in deduplicated_profiles:
+                validated_profile_data = await _validate_and_score_profile(profile_data, session_for_validation, VALIDATION_SCORE_WEIGHTS)
+                if validated_profile_data:
+                    validated_profiles.append(validated_profile_data)
 
-        enriched_profiles = await _enrich_profiles_with_geoip(validated_profiles, geoip_reader, session_for_geoip) # Use validated profiles
+        enriched_profiles = []
+        if geoip_country_lookup_enabled:
+            async with aiohttp.ClientSession() as session_for_geoip: # Use async with for geoip session
+                enriched_profiles = await _enrich_profiles_with_geoip(validated_profiles, geoip_reader, session_for_geoip) # Use validated profiles
+        else:
+            enriched_profiles = validated_profiles # If geoip is disabled, just use validated profiles
+
         final_profiles_scored = _filter_and_sort_profiles(enriched_profiles)
 
         logging.info(f"After validation and filtering, {len(final_profiles_scored)} unique profiles remain.")
@@ -701,8 +707,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
             geoip_reader.close()
         if os.path.exists(GEOIP_DB_PATH):
             os.remove(GEOIP_DB_PATH)
-        await session_for_geoip.close()
-        await session_for_validation.close() # Close validation session
 
 
 class ChannelHistoryManager:
