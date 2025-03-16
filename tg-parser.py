@@ -10,7 +10,7 @@ import urllib.parse as urllib_parse
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Dict, List, Optional, Set, Union, Any
-from functools import lru_cache
+from functools import lru_cache, wraps
 import time
 
 from bs4 import BeautifulSoup
@@ -28,6 +28,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Constants ---
 MAX_THREADS_PARSING = 10 # Experiment with increasing this value carefully
+MAX_VALIDATION_THREADS = 50 # Increased threads for validation
 REQUEST_TIMEOUT_AIOHTTP = 60
 MIN_PROFILES_TO_DOWNLOAD = 1000
 MAX_PROFILES_TO_DOWNLOAD = 200000
@@ -60,10 +61,12 @@ PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
 MAX_RETRIES_FETCH_PAGE = 3
 RETRY_DELAY_BASE_FETCH_PAGE = 2
 DNS_TIMEOUT = 5.0
-VALIDATION_TIMEOUT = 10.0 # Default validation timeout
-VALIDATION_ANONYMITY_TIMEOUT = 7.0 # Reduced timeout for anonymity check
-VALIDATION_SPEED_TIMEOUT = 5.0 # Reduced timeout for speed check
+VALIDATION_TIMEOUT = 3.0 # Reduced default validation timeout
+VALIDATION_ANONYMITY_TIMEOUT = 2.0 # Reduced timeout for anonymity check
+VALIDATION_SPEED_TIMEOUT = 1.5 # Reduced timeout for speed check
 VALIDATION_TEST_URL = "http://httpbin.org/ip"
+VALIDATION_CACHE_TTL = 60 # TTL for validation cache in seconds
+MAX_VALIDATION_CONCURRENT = 100 # Limit concurrent validation tasks
 
 VLESS_EMOJI = "🌠"
 HY2_EMOJI = "⚡"
@@ -79,6 +82,11 @@ if not os.path.exists('config-tg.txt'):
     with open('config-tg.txt', 'w'):
         pass
 
+# Compile cleaning rules regex
+COMPILED_PROFILE_CLEANING_RULES = [re.compile(rule, re.IGNORECASE) for rule in PROFILE_CLEANING_RULES]
+
+# Validation result cache with TTL
+validation_cache = {}
 
 def json_load(path: str) -> Optional[Union[dict, list]]:
     """Loads JSON file, handling potential errors."""
@@ -238,7 +246,7 @@ async def fetch_channel_page_async(session: aiohttp.ClientSession, channel_url: 
 async def parse_profiles_from_page_async(html_page: str, channel_url: str, allowed_protocols: Set[str], profile_score_func) -> List[Dict]:
     """Asynchronously parses profiles from an HTML page with improved HTML cleaning and pre-filtering."""
     channel_profiles = []
-    soup = BeautifulSoup(html_page, 'html.parser')
+    soup = BeautifulSoup(html_page, 'lxml') # Using lxml parser
     message_blocks = soup.find_all('div', class_='tgme_widget_message')
 
     for message_block in message_blocks:
@@ -257,16 +265,18 @@ async def parse_profiles_from_page_async(html_page: str, channel_url: str, allow
             code_content_lines = code_content.splitlines()
             for line in code_content_lines:
                 cleaned_content = line.strip()
-                # --- Предварительная фильтрация: проверяем, начинается ли строка с нужного протокола ---
+                # --- Предварительная фильтрация: проверяем, начинается ли строка с нужного протокола и минимальная длина ---
                 is_profile_line = False
-                for protocol in allowed_protocols:
-                    if cleaned_content.startswith(f"{protocol}://"):
-                        is_profile_line = True
-                        break
+                if len(cleaned_content) > 15: # Minimum length filter
+                    for protocol in allowed_protocols:
+                        if cleaned_content.startswith(f"{protocol}://"):
+                            is_profile_line = True
+                            break
                 if is_profile_line:
                     profile_link = cleaned_content
                     score = profile_score_func(profile_link)
-                    channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
+                    if score > 0: # Optional: Filter out profiles with zero score early
+                        channel_profiles.append({'profile': profile_link, 'score': score, 'date': message_datetime})
     return channel_profiles
 
 
@@ -366,11 +376,11 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
             logging.error(f"Critical error processing channel {channel_url}: {channel_exception}")
 
 
-def clean_profile(profile_string: str, cleaning_rules: List[str] = PROFILE_CLEANING_RULES) -> str:
+def clean_profile(profile_string: str, cleaning_rules=[]) -> str: # Use compiled regex rules
     """Cleans a profile string from unnecessary characters using configurable rules."""
     part = profile_string
-    for rule in cleaning_rules:
-        part = re.sub(rule, '', part, flags=re.IGNORECASE)
+    for rule in COMPILED_PROFILE_CLEANING_RULES: # Use compiled rules
+        part = rule.sub('', part)
     part = urllib_parse.unquote(part).strip()
     part = part.replace(' ', '')
     part = re.sub(r'[\x00\x01]', '', part)
@@ -512,9 +522,13 @@ async def _validate_proxy_availability(session: aiohttp.ClientSession, proxy_url
     """Validates proxy availability."""
     try:
         logging.debug(f"Validating availability for proxy: {proxy_url}")
-        async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
-            return response.status == 200
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+            async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
+                return response.status == 200
+    except asyncio.TimeoutError:
+        logging.debug(f"Proxy availability check timed out for {proxy_url} after {timeout}s.") # More specific timeout log
+        return False
+    except (aiohttp.ClientError) as e:
         logging.debug(f"Proxy availability check failed for {proxy_url}: {e}")
         return False
 
@@ -522,17 +536,21 @@ async def _validate_proxy_anonymity(session: aiohttp.ClientSession, proxy_url: s
     """Validates proxy anonymity."""
     try:
         logging.debug(f"Validating anonymity for proxy: {proxy_url}")
-        async with session.get("http://httpbin.org/headers", proxy=proxy_url, timeout=timeout) as response: # Using http for headers check
-            headers_json = await response.json()
-            proxy_origin = headers_json.get("origin")
-            if proxy_origin:
-                proxy_ip = proxy_origin.split(',')[0].strip()
-                logging.debug(f"Proxy IP: {proxy_ip}")
-                return True
-            else:
-                logging.warning(f"Could not determine proxy IP from 'origin' header for {proxy_url}.")
-                return False
-    except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+            async with session.get("http://httpbin.org/headers", proxy=proxy_url, timeout=timeout) as response: # Using http for headers check
+                headers_json = await response.json()
+                proxy_origin = headers_json.get("origin")
+                if proxy_origin:
+                    proxy_ip = proxy_origin.split(',')[0].strip()
+                    logging.debug(f"Proxy IP: {proxy_ip}")
+                    return True
+                else:
+                    logging.warning(f"Could not determine proxy IP from 'origin' header for {proxy_url}.")
+                    return False
+    except asyncio.TimeoutError:
+        logging.debug(f"Proxy anonymity check timed out for {proxy_url} after {timeout}s.") # More specific timeout log
+        return False
+    except (aiohttp.ClientError, json.JSONDecodeError) as e:
         logging.debug(f"Proxy anonymity check failed for {proxy_url}: {e}")
         return False
 
@@ -541,29 +559,50 @@ async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, t
     start_time = time.perf_counter()
     try:
         logging.debug(f"Measuring speed for proxy: {proxy_url}")
-        async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
-            await response.read()
-            response_time = time.perf_counter() - start_time
-            logging.debug(f"Proxy {proxy_url} response time: {response_time:.2f}s")
-            return response_time
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+            async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
+                await response.content.readany(1) # Read only first byte for speed test (TTFB)
+                response_time = time.perf_counter() - start_time
+                logging.debug(f"Proxy {proxy_url} response time: {response_time:.2f}s")
+                return response_time
+    except asyncio.TimeoutError:
+        logging.debug(f"Proxy speed check timed out for {proxy_url} after {timeout}s.") # More specific timeout log
+        return None
+    except (aiohttp.ClientError) as e:
         logging.debug(f"Proxy speed check failed for {proxy_url}: {e}")
         return None
 
-@lru_cache(maxsize=1024) # Caching validation results, TTL removed for Python versions < 3.9
-async def _cached_validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
-    """Cached validation and scoring of proxy profile."""
-    return await _validate_and_score_profile(profile_data, session, validation_score_weights)
+async def get_cached_validation_result(profile_string: str) -> Optional[Dict]:
+    """Retrieves validation result from cache if valid and not expired."""
+    cached_data = validation_cache.get(profile_string)
+    if cached_data:
+        if time.time() - cached_data['timestamp'] <= VALIDATION_CACHE_TTL:
+            logging.debug(f"Using cached validation result for {profile_string[:100]}...")
+            return cached_data['result']
+        else:
+            logging.debug(f"Cached validation result expired for {profile_string[:100]}...")
+            return None
+    return None
+
+async def set_cached_validation_result(profile_string: str, validation_result: Optional[Dict]) -> None:
+    """Sets validation result in cache with timestamp."""
+    validation_cache[profile_string] = {'result': validation_result, 'timestamp': time.time()}
+    logging.debug(f"Cached validation result for {profile_string[:100]}...")
 
 
-async def _validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
-    """Validates proxy profile and calculates validation score."""
+async def _validate_and_score_profile(profile_data: Dict, session: aiohttp.ClientSession, validation_semaphore: asyncio.Semaphore, validation_score_weights: Dict[str, int] = VALIDATION_SCORE_WEIGHTS) -> Optional[Dict]:
+    """Validates proxy profile and calculates validation score, now with semaphore and cache."""
     profile_string = profile_data['profile']
     proxy_url = profile_string
 
-    availability = await _validate_proxy_availability(session, proxy_url)
-    anonymity = await _validate_proxy_anonymity(session, proxy_url)
-    speed = await _measure_proxy_speed(session, proxy_url)
+    cached_result = await get_cached_validation_result(profile_string)
+    if cached_result:
+        return cached_result
+
+    async with validation_semaphore: # Limit concurrent validation tasks
+        availability = await _validate_proxy_availability(session, proxy_url)
+        anonymity = await _validate_proxy_anonymity(session, proxy_url)
+        speed = await _measure_proxy_speed(session, proxy_url)
 
     validation_score = 0
     if availability:
@@ -579,9 +618,11 @@ async def _validate_and_score_profile(profile_data: Dict, session: aiohttp.Clien
     if availability:
         profile_data['validation_score'] = validation_score
         profile_data['final_score'] = profile_data['score'] + validation_score
+        await set_cached_validation_result(profile_string, profile_data) # Cache successful validation result
         return profile_data
     else:
         logging.info(f"Profile failed validation (availability): {profile_string[:100]}...")
+        await set_cached_validation_result(profile_string, None) # Cache failed validation result (None)
         return None
 
 
@@ -699,6 +740,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
     processed_profiles = []
     geoip_reader = None
     geoip_country_lookup_enabled = True
+    validation_semaphore = asyncio.Semaphore(MAX_VALIDATION_CONCURRENT) # Semaphore for validation
 
     if not await download_geoip_db():
         logging.warning("GeoIP database download failed. Location information will be replaced with pirate flag emoji.")
@@ -711,17 +753,16 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         cleaned_extracted_profiles = await _clean_and_extract_profiles(parsed_profiles_list)
         deduplicated_profiles = _deduplicate_profiles_by_ip_port_protocol(cleaned_extracted_profiles)
 
-        # --- Parallelized Validation using asyncio.gather ---
+        # --- Parallelized Validation using asyncio.gather and Semaphore ---
         validated_profiles = []
         async with aiohttp.ClientSession() as session_for_validation:
             validation_tasks = [
-                _cached_validate_and_score_profile(profile_data, session_for_validation, VALIDATION_SCORE_WEIGHTS) # Using cached validation function
+                _validate_and_score_profile(profile_data, session_for_validation, validation_semaphore, VALIDATION_SCORE_WEIGHTS)
                 for profile_data in deduplicated_profiles
             ]
             validated_profiles = await asyncio.gather(*validation_tasks)
             validated_profiles = [profile for profile in validated_profiles if profile is not None] # Filter out None results
         # --- End Parallelized Validation ---
-
 
         enriched_profiles = []
         if geoip_country_lookup_enabled:
@@ -948,7 +989,7 @@ async def main_async():
         logging.info(f'Loading configuration from {CONFIG_FILE}...')
         config_data = json_load(CONFIG_FILE)
         if config_data:
-            global PROFILE_SCORE_WEIGHTS, PROFILE_CLEANING_RULES, PROFILE_FRESHNESS_DAYS, MAX_FAILED_CHECKS, MAX_NO_MORE_PAGES_COUNT, MAX_THREADS_PARSING, REQUEST_TIMEOUT_AIOHTTP, MIN_PROFILES_TO_DOWNLOAD, MAX_PROFILES_TO_DOWNLOAD, MAX_RETRIES_FETCH_PAGE, RETRY_DELAY_BASE_FETCH_PAGE, DNS_TIMEOUT, VALIDATION_TIMEOUT, VALIDATION_TEST_URL, VALIDATION_SCORE_WEIGHTS, VALIDATION_ANONYMITY_TIMEOUT, VALIDATION_SPEED_TIMEOUT
+            global PROFILE_SCORE_WEIGHTS, PROFILE_CLEANING_RULES, PROFILE_FRESHNESS_DAYS, MAX_FAILED_CHECKS, MAX_NO_MORE_PAGES_COUNT, MAX_THREADS_PARSING, REQUEST_TIMEOUT_AIOHTTP, MIN_PROFILES_TO_DOWNLOAD, MAX_PROFILES_TO_DOWNLOAD, MAX_RETRIES_FETCH_PAGE, RETRY_DELAY_BASE_FETCH_PAGE, DNS_TIMEOUT, VALIDATION_TIMEOUT, VALIDATION_TEST_URL, VALIDATION_SCORE_WEIGHTS, VALIDATION_ANONYMITY_TIMEOUT, VALIDATION_SPEED_TIMEOUT, MAX_VALIDATION_THREADS, VALIDATION_CACHE_TTL, MAX_VALIDATION_CONCURRENT
             PROFILE_SCORE_WEIGHTS = config_data.get('profile_score_weights', PROFILE_SCORE_WEIGHTS_DEFAULT)
             PROFILE_CLEANING_RULES = config_data.get('profile_cleaning_rules', PROFILE_CLEANING_RULES_DEFAULT)
             PROFILE_FRESHNESS_DAYS = config_data.get('profile_freshness_days', PROFILE_FRESHNESS_DAYS)
@@ -966,6 +1007,9 @@ async def main_async():
             VALIDATION_SCORE_WEIGHTS = config_data.get('validation_score_weights', VALIDATION_SCORE_WEIGHTS_DEFAULT)
             VALIDATION_ANONYMITY_TIMEOUT = config_data.get('validation_anonymity_timeout', VALIDATION_ANONYMITY_TIMEOUT) # Load specific timeouts from config
             VALIDATION_SPEED_TIMEOUT = config_data.get('validation_speed_timeout', VALIDATION_SPEED_TIMEOUT) # Load specific timeouts from config
+            MAX_VALIDATION_THREADS = config_data.get('max_validation_threads', MAX_VALIDATION_THREADS) # Load threads for validation
+            VALIDATION_CACHE_TTL = config_data.get('validation_cache_ttl', VALIDATION_CACHE_TTL) # Load validation cache TTL
+            MAX_VALIDATION_CONCURRENT = config_data.get('max_validation_concurrent', MAX_VALIDATION_CONCURRENT) # Load concurrent validation limit
 
 
             logging.info(f'Configuration loaded.')
@@ -1004,4 +1048,6 @@ async def main_async():
 
 
 if __name__ == "__main__":
+    import async_timeout # Import for asyncio.wait_for
+
     asyncio.run(main_async())
