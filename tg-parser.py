@@ -21,6 +21,8 @@ import ipaddress
 import certifi
 import gzip
 from tqdm.asyncio import tqdm_asyncio
+# Import for asyncio.wait_for timeout context manager
+import async_timeout
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -522,7 +524,7 @@ async def _validate_proxy_availability(session: aiohttp.ClientSession, proxy_url
     """Validates proxy availability."""
     try:
         logging.debug(f"Validating availability for proxy: {proxy_url}")
-        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+        async with async_timeout.timeout(timeout): # Using async_timeout.timeout for timeout context
             async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
                 return response.status == 200
     except asyncio.TimeoutError:
@@ -536,7 +538,7 @@ async def _validate_proxy_anonymity(session: aiohttp.ClientSession, proxy_url: s
     """Validates proxy anonymity."""
     try:
         logging.debug(f"Validating anonymity for proxy: {proxy_url}")
-        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+        async with async_timeout.timeout(timeout): # Using async_timeout.timeout for timeout context
             async with session.get("http://httpbin.org/headers", proxy=proxy_url, timeout=timeout) as response: # Using http for headers check
                 headers_json = await response.json()
                 proxy_origin = headers_json.get("origin")
@@ -559,7 +561,7 @@ async def _measure_proxy_speed(session: aiohttp.ClientSession, proxy_url: str, t
     start_time = time.perf_counter()
     try:
         logging.debug(f"Measuring speed for proxy: {proxy_url}")
-        async with async_timeout.timeout(timeout): # Using asyncio.wait_for for timeout
+        async with async_timeout.timeout(timeout): # Using async_timeout.timeout for timeout context
             async with session.get(VALIDATION_TEST_URL, proxy=proxy_url, timeout=timeout) as response:
                 await response.content.readany(1) # Read only first byte for speed test (TTFB)
                 response_time = time.perf_counter() - start_time
@@ -1048,6 +1050,5 @@ async def main_async():
 
 
 if __name__ == "__main__":
-    import async_timeout # Import for asyncio.wait_for
-
+    # Ensure async-timeout is installed: pip install async-timeout
     asyncio.run(main_async())
