@@ -745,7 +745,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 class ChannelHistoryManager:
     """Manages channel history (failures, 'No More Pages') with asynchronous file operations."""
 
-    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_FILE):
+    def __init__(self, failure_file: str = 'channel_failure_history.json', no_more_pages_file: str = 'no_more_pages_history.json'):
         """Initializes ChannelHistoryManager."""
         self.failure_file = failure_file
         self.no_more_pages_file = no_more_pages_file
