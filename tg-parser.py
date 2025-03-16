@@ -706,32 +706,202 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
 class ChannelHistoryManager:
     """Manages channel history (failures, 'No More Pages') with asynchronous file operations."""
-    # ... (ChannelHistoryManager class - no changes needed in this part) ...
+
+    def __init__(self, failure_file: str = FAILURE_HISTORY_FILE, no_more_pages_file: str = NO_MORE_PAGES_HISTORY_FILE):
+        """Initializes ChannelHistoryManager."""
+        self.failure_file = failure_file
+        self.no_more_pages_file = no_more_pages_file
+
+    async def _load_json_history(self, filepath: str) -> Dict:
+        """Loads history from a JSON file asynchronously."""
+        if not await aiofiles.os.path.exists(filepath):
+            logging.warning(f"History file '{filepath}' not found. Creating: {filepath}")
+            if not await self._save_json_history({}, filepath):
+                logging.error(f"Failed to create history file: {filepath}")
+                return {}
+            return {}
+        history = await self._async_json_load(filepath)
+        return history if history else {}
+
+    async def _save_json_history(self, history: Dict, filepath: str) -> bool:
+        """Saves history to a JSON file asynchronously."""
+        logging.info(f"Saving history to '{filepath}'.")
+        return await self._async_json_save(history, filepath)
+
+    async def _async_json_load(self, path: str) -> Optional[dict]:
+        """Asynchronously loads JSON file, handling potential errors."""
+        if not await aiofiles.os.path.exists(path):
+            logging.error(f"File not found: {path}")
+            return None
+        if (await aiofiles.os.stat(path)).st_size == 0:
+            logging.warning(f"File '{path}' is empty. Returning empty dictionary.")
+            return {}
+        try:
+            async with aiofiles.open(path, 'r', encoding="utf-8") as file:
+                content = await file.read()
+                data = json.loads(content)
+                if not isinstance(data, (dict, list)):
+                    logging.error(f"File {path} does not contain a JSON object or array.")
+                    return None
+                return data
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error in file: {path} - {e}.")
+            return None
+
+    async def _async_json_save(self, data: dict, path: str, indent: int = 4, backup: bool = True) -> bool:
+        """Asynchronously saves data to JSON file atomically with optional backup."""
+        try:
+            if backup and await aiofiles.os.path.exists(path):
+                backup_path = path + '.bak'
+                shutil.copy2(path, backup_path)
+
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as tmp_file:
+                json.dump(data, tmp_file, ensure_ascii=False, indent=indent)
+            temp_filepath = tmp_file.name
+            await aiofiles.os.replace(temp_filepath, path)
+            return True
+        except Exception as e:
+            logging.error(f"Error saving JSON to file {path}: {e}")
+            return False
+
+    async def load_failure_history(self) -> Dict:
+        """Loads channel failure history."""
+        logging.info(f"Loading failure history from '{self.failure_file}'.")
+        return await self._load_json_history(self.failure_file)
+
+    async def save_failure_history(self, history: Dict) -> bool:
+        """Saves channel failure history."""
+        return await self._save_json_history(history, self.failure_file)
+
+    async def load_no_more_pages_history(self) -> Dict:
+        """Loads 'No More Pages' history for channels."""
+        logging.info(f"Loading 'No More Pages' history from '{self.no_more_pages_file}'.")
+        return await self._load_json_history(self.no_more_pages_file)
+
+    async def save_no_more_pages_history(self, history: Dict) -> bool:
+        """Saves 'No More Pages' history for channels."""
+        return await self._save_json_history(history, self.no_more_pages_file)
 
 
 async def load_channels_async(channels_file: str = 'telegram_channels.json') -> List[str]:
     """Loads channel list from a JSON file asynchronously and validates format."""
-    # ... (load_channels_async function - no changes needed in this part) ...
+    telegram_channel_names_original = await ChannelHistoryManager()._async_json_load(channels_file)
+
+    if telegram_channel_names_original is None:
+        logging.critical(f"Failed to load channel list from {channels_file}. Please check the file or configuration.")
+        return None  # Return None to indicate failure
+
+    if not isinstance(telegram_channel_names_original, list):
+        logging.critical(f"Invalid format in {channels_file}. Expected a JSON list of strings. Exiting.")
+        exit(1)
+
+    if not telegram_channel_names_original:
+        logging.warning(f"Channel list in {channels_file} is empty.")
+        return []
+
+    telegram_channel_names_original[:] = [x for x in telegram_channel_names_original if isinstance(x, str) and len(x) >= 5]
+    return list(set(telegram_channel_names_original))
 
 
 async def run_parsing_async(telegram_channel_names_to_parse: List[str], channel_history_manager: ChannelHistoryManager) -> tuple[
     List[Dict], Set[str], List[str], Dict, Dict]:
     """Runs asynchronous channel parsing with progress indication."""
-    # ... (run_parsing_async function - no changes needed in this part) ...
+    channels_parsed_count = len(telegram_channel_names_to_parse)
+    logging.info(f'Starting parsing of {channels_parsed_count} channels...')
+
+    channel_failure_counts = await channel_history_manager.load_failure_history()
+    no_more_pages_counts = await channel_history_manager.load_no_more_pages_history()
+    channels_to_remove = []
+    thread_semaphore = asyncio.Semaphore(MAX_THREADS_PARSING)
+    parsed_profiles = []
+    channels_with_profiles = set()
+
+    tasks = []
+    for channel_name in telegram_channel_names_to_parse:
+        task = process_channel_async(channel_name, parsed_profiles, thread_semaphore, telegram_channel_names_to_parse,
+                                    channels_parsed_count, channels_with_profiles, channel_failure_counts,
+                                    channels_to_remove, no_more_pages_counts, ALLOWED_PROTOCOLS,
+                                    calculate_profile_score)
+        tasks.append(task)
+
+    logging.info("Parsing channels with progress bar...")
+    await tqdm_asyncio.gather(*tasks, desc="Parsing channels", total=channels_parsed_count)
+
+    return parsed_profiles, channels_with_profiles, channels_to_remove, channel_failure_counts, no_more_pages_counts
 
 
 async def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict], channels_to_remove: List[str],
                  telegram_channel_names_original: List[str], channel_history_manager: ChannelHistoryManager,
                  channel_failure_counts: Dict, no_more_pages_counts: Dict) -> None:
     """Saves parsing results: profiles, updated channel list, history with asynchronous operations."""
-    # ... (save_results function - no changes needed in this part) ...
+    num_profiles_to_save = min(max(len(final_profiles_scored), MIN_PROFILES_TO_DOWNLOAD), MAX_PROFILES_TO_DOWNLOAD)
+    profiles_to_save = final_profiles_scored[:num_profiles_to_save]
+
+    with open("config-tg.txt", "w", encoding="utf-8") as file:
+        for profile_data in profiles_to_save:
+            file.write(f"{profile_data['profile'].encode('utf-8').decode('utf-8')}\n")
+
+    if channels_to_remove:
+        logging.info(f"Removing channels: {channels_to_remove}")
+        telegram_channel_names_updated = [chan for chan in telegram_channel_names_original if chan not in channels_to_remove]
+        if telegram_channel_names_updated != telegram_channel_names_original:
+            if os.path.exists('telegram_channels.json'):
+                shutil.copy2('telegram_channels.json', 'telegram_channels.json.bak')
+            if await ChannelHistoryManager()._async_json_save(telegram_channel_names_updated, 'telegram_channels.json'):
+                logging.info(f"Updated channel list saved to telegram_channels.json. Removed {len(channels_to_remove)} channels.")
+            else:
+                logging.error(f"Failed to save updated channel list to telegram_channels.json.")
+        else:
+            logging.info("Channel list in telegram_channels.json remains unchanged.")
+    else:
+        logging.info("No channels to remove.")
+
+    if await channel_history_manager.save_failure_history(channel_failure_counts):
+        logging.info("Failure history saved successfully.")
+    else:
+        logging.error("Failed to save failure history.")
+
+    if await channel_history_manager.save_no_more_pages_history(no_more_pages_counts):
+        logging.info("'No More Pages' history saved successfully.")
+    else:
+        logging.error("Failed to save 'No More Pages' history.")
 
 
 def log_statistics(start_time: datetime, initial_channels_count: int, channels_parsed_count: int, parsed_profiles: List[Dict],
                    final_profiles_scored: List[Dict], profiles_to_save: List[Dict], channels_with_profiles: Set[str],
                    channels_to_remove: List[str]) -> None:
     """Logs final parsing statistics in structured JSON format and text format."""
-    # ... (log_statistics function - no changes needed in this part) ...
+    end_time = datetime.now()
+    total_time = end_time - start_time
+
+    statistics_data = {
+        "total_execution_time_seconds": total_time.total_seconds(),
+        "initial_channel_count": initial_channels_count,
+        "channels_processed": channels_parsed_count,
+        "channels_with_profiles": len(channels_with_profiles),
+        "profiles_found_pre_processing": len(parsed_profiles),
+        "unique_profiles_post_processing": len(final_profiles_scored),
+        "profiles_saved_to_config_tg_txt": len(profiles_to_save),
+        "channels_removed_from_list": len(channels_to_remove),
+        "end_time": end_time.isoformat(),
+        "start_time": start_time.isoformat()
+    }
+
+    logging.info("-" * 40)
+    logging.info(f"{'--- Final Statistics ---':^40}")
+    logging.info("-" * 40)
+    logging.info(f"{'Total Execution Time:':<35} {str(total_time).split('.')[0]}")
+    logging.info(f"{'Initial Channel Count:':<35} {initial_channels_count}")
+    logging.info(f"{'Channels Processed:':<35} {channels_parsed_count}")
+    logging.info(f"{'Channels with Profiles:':<35} {len(channels_with_profiles)}")
+    logging.info(f"{'Profiles Found (Pre-processing):':<35} {len(parsed_profiles)}")
+    logging.info(f"{'Unique Profiles (Post-processing):':<35} {len(final_profiles_scored)}")
+    logging.info(f"{'Profiles Saved to config-tg.txt:':<35} {len(profiles_to_save)}")
+    logging.info(f"{'Channels Removed from List:':<35} {len(channels_to_remove)}")
+    logging.info("-" * 40)
+    logging.info('Parsing Completed!')
+
+    logging.info(f"Statistics in JSON format: {json.dumps(statistics_data, indent=4)}")
 
 
 async def main_async():
@@ -763,6 +933,10 @@ async def main_async():
 
         start_time = datetime.now()
         telegram_channel_names_original = await load_channels_async()
+        if telegram_channel_names_original is None: # Check if load_channels_async returned None
+            logging.critical("Failed to load Telegram channel names. Exiting.")
+            exit(1)
+
         telegram_channel_names_to_parse = list(telegram_channel_names_original)
         initial_channels_count = len(telegram_channel_names_original)
         logging.info(f'Initial channel count: {initial_channels_count}')
