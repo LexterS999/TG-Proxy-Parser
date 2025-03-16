@@ -29,9 +29,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Constants ---
-MAX_THREADS_PARSING = 10 # Experiment with increasing this value carefully
-MAX_VALIDATION_THREADS = 50 # Increased threads for validation
-REQUEST_TIMEOUT_AIOHTTP = 60
+MAX_THREADS_PARSING = 100 # Experiment with increasing this value carefully
+MAX_VALIDATION_THREADS = 100 # Increased threads for validation
+REQUEST_TIMEOUT_AIOHTTP = 30
 MIN_PROFILES_TO_DOWNLOAD = 1000
 MAX_PROFILES_TO_DOWNLOAD = 200000
 ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan", "ss"}
@@ -52,22 +52,22 @@ VALIDATION_SCORE_WEIGHTS_DEFAULT = {
     "speed": 2,
 }
 VALIDATION_SCORE_WEIGHTS = VALIDATION_SCORE_WEIGHTS_DEFAULT
-MAX_FAILED_CHECKS = 12
+MAX_FAILED_CHECKS = 6
 FAILURE_HISTORY_FILE = 'channel_failure_history.json'
 NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'
-MAX_NO_MORE_PAGES_COUNT = 12
-PROFILE_FRESHNESS_DAYS = 60
+MAX_NO_MORE_PAGES_COUNT = 6
+PROFILE_FRESHNESS_DAYS = 7
 CONFIG_FILE = 'config.json'
 PROFILE_CLEANING_RULES_DEFAULT = []
 PROFILE_CLEANING_RULES = PROFILE_CLEANING_RULES_DEFAULT
-MAX_RETRIES_FETCH_PAGE = 3
+MAX_RETRIES_FETCH_PAGE = 2
 RETRY_DELAY_BASE_FETCH_PAGE = 2
-DNS_TIMEOUT = 5.0
-VALIDATION_TIMEOUT = 3.0 # Reduced default validation timeout
+DNS_TIMEOUT = 2.0
+VALIDATION_TIMEOUT = 2.0 # Reduced default validation timeout
 VALIDATION_ANONYMITY_TIMEOUT = 2.0 # Reduced timeout for anonymity check
-VALIDATION_SPEED_TIMEOUT = 1.5 # Reduced timeout for speed check
+VALIDATION_SPEED_TIMEOUT = 0.7 # Reduced timeout for speed check
 VALIDATION_TEST_URL = "http://httpbin.org/ip"
-VALIDATION_CACHE_TTL = 60 # TTL for validation cache in seconds
+VALIDATION_CACHE_TTL = 3 # TTL for validation cache in seconds
 MAX_VALIDATION_CONCURRENT = 100 # Limit concurrent validation tasks
 
 VLESS_EMOJI = "🌠"
