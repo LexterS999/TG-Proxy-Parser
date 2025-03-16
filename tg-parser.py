@@ -1,7 +1,7 @@
 import aiohttp
 import asyncio
 import json
-import os # Import the standard os module
+import os
 import random
 import re
 import shutil
@@ -20,6 +20,7 @@ import aiofiles
 import ipaddress
 import certifi
 import gzip
+from tqdm.asyncio import tqdm_asyncio # Import tqdm_asyncio
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -714,7 +715,7 @@ class ChannelHistoryManager:
 
     async def _load_json_history(self, filepath: str) -> Dict:
         """Loads history from a JSON file asynchronously."""
-        if not os.path.exists(filepath): # Use standard os.path
+        if not os.path.exists(filepath):
             logging.warning(f"History file '{filepath}' not found. Creating: {filepath}")
             if not await self._save_json_history({}, filepath):
                 logging.error(f"Failed to create history file: {filepath}")
@@ -730,10 +731,10 @@ class ChannelHistoryManager:
 
     async def _async_json_load(self, path: str) -> Optional[dict]:
         """Asynchronously loads JSON file, handling potential errors."""
-        if not os.path.exists(path): # Use standard os.path
+        if not os.path.exists(path):
             logging.error(f"File not found: {path}")
             return None
-        if os.stat(path).st_size == 0: # Use standard os.stat
+        if os.stat(path).st_size == 0:
             logging.warning(f"File '{path}' is empty. Returning empty dictionary.")
             return {}
         try:
@@ -751,14 +752,14 @@ class ChannelHistoryManager:
     async def _async_json_save(self, data: dict, path: str, indent: int = 4, backup: bool = True) -> bool:
         """Asynchronously saves data to JSON file atomically with optional backup."""
         try:
-            if backup and os.path.exists(path): # Use standard os.path
+            if backup and os.path.exists(path):
                 backup_path = path + '.bak'
                 shutil.copy2(path, backup_path)
 
             with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as tmp_file:
                 json.dump(data, tmp_file, ensure_ascii=False, indent=indent)
             temp_filepath = tmp_file.name
-            os.replace(temp_filepath, path) # Use standard os.replace
+            os.replace(temp_filepath, path)
             return True
         except Exception as e:
             logging.error(f"Error saving JSON to file {path}: {e}")
