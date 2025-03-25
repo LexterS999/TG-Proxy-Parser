@@ -82,6 +82,90 @@ if not os.path.exists(config.OUTPUT_CONFIG_FILE):
     with open(config.OUTPUT_CONFIG_FILE, 'w'):
         pass
 
+class ChannelHistoryManager:
+    """Manages channel history (failures, 'No More Pages', circuit breaker)."""
+
+    def __init__(self, failure_file: str = config.FAILURE_HISTORY_FILE,
+                 no_more_pages_file: str = config.NO_MORE_PAGES_HISTORY_FILE,
+                 circuit_breaker_file: str = config.CIRCUIT_BREAKER_HISTORY_FILE): # Add circuit breaker file
+        """Initializes ChannelHistoryManager."""
+        self.failure_file = failure_file
+        self.no_more_pages_file = no_more_pages_file
+        self.circuit_breaker_file = circuit_breaker_file
+
+    def _load_json_history(self, filepath: str) -> Dict:
+        """Loads history from a JSON file, returns empty dict if file not found or load fails."""
+        history = json_load(filepath)
+        return history if history else {}
+
+    def _save_json_history(self, history: Dict, filepath: str) -> bool:
+        """Saves history to a JSON file."""
+        logging.debug(f"Saving history to '{filepath}'.") # Changed log level to debug
+        return json_save(history, filepath)
+
+    def load_failure_history(self) -> Dict:
+        """Loads channel failure history."""
+        logging.debug(f"Loading failure history from '{self.failure_file}'.") # Changed log level to debug
+        return self._load_json_history(self.failure_file)
+
+    def save_failure_history(self, history: Dict) -> bool:
+        """Saves channel failure history."""
+        return self._save_json_history(history, self.failure_file)
+
+    def load_no_more_pages_history(self) -> Dict:
+        """Loads 'No More Pages' history for channels."""
+        logging.debug(f"Loading 'No More Pages' history from '{self.no_more_pages_file}'.") # Changed log level to debug
+        return self._load_json_history(self.no_more_pages_file)
+
+    def save_no_more_pages_history(self, history: Dict) -> bool:
+        """Saves 'No More Pages' history for channels."""
+        return self._save_json_history(history, self.no_more_pages_file)
+
+    def load_circuit_breaker_history(self) -> Dict:
+        """Loads circuit breaker history from JSON file."""
+        logging.debug(f"Loading circuit breaker history from '{self.circuit_breaker_file}'.") # Changed log level to debug
+        return self._load_json_history(self.circuit_breaker_file)
+
+    def save_circuit_breaker_history(self, history: Dict) -> bool:
+        """Saves circuit breaker history to JSON file."""
+        return self._save_json_history(history, self.circuit_breaker_file)
+
+    def activate_circuit_breaker(self, channel_url: str) -> None:
+        """Activates circuit breaker for a channel, records activation time."""
+        history = self.load_circuit_breaker_history()
+        history[channel_url] = datetime.now(timezone.utc).isoformat() # Store activation timestamp
+        self.save_circuit_breaker_history(history)
+        logging.info(f"Circuit breaker activated for channel '{channel_url}'.")
+
+    def deactivate_circuit_breaker(self, channel_url: str) -> None:
+        """Deactivates circuit breaker for a channel."""
+        history = self.load_circuit_breaker_history()
+        if channel_url in history:
+            del history[channel_url]
+            self.save_circuit_breaker_history(history)
+            logging.info(f"Circuit breaker deactivated for channel '{channel_url}'.")
+
+    def is_circuit_breaker_active(self, channel_url: str) -> bool:
+        """Checks if circuit breaker is active for a channel and if cooldown period has expired."""
+        history = self.load_circuit_breaker_history()
+        if channel_url in history:
+            activation_time_str = history[channel_url]
+            try:
+                activation_time = datetime.fromisoformat(activation_time_str).replace(tzinfo=timezone.utc)
+                cooldown_expiration_time = activation_time + timedelta(seconds=config.CIRCUIT_BREAKER_COOLDOWN)
+                if datetime.now(timezone.utc) < cooldown_expiration_time:
+                    logging.debug(f"Circuit breaker is active for '{channel_url}', cooldown expires at {cooldown_expiration_time.strftime('%Y-%m-%d %H:%M:%S UTC')}.") # Debug log
+                    return True
+                else:
+                    logging.info(f"Circuit breaker cooldown expired for '{channel_url}'. Deactivating.")
+                    self.deactivate_circuit_breaker(channel_url) # Deactivate if cooldown expired
+                    return False
+            except ValueError as e:
+                logging.error(f"Error parsing circuit breaker activation time for '{channel_url}': {e}. Deactivating circuit breaker.")
+                self.deactivate_circuit_breaker(channel_url) # Deactivate if parsing error
+                return False
+        return False # Circuit breaker not active
+
 
 def json_load(path: str) -> Optional[dict]:
     """Loads JSON file, handling file not found, empty file and JSON decode errors."""
@@ -553,7 +637,7 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
                 profile_strings_set.remove(profile_data['profile'])
 
         fresh_profiles_scored = []
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(timezone.utc)
         for profile_data in final_profiles_scored:
             if 'date' in profile_data and isinstance(profile_data['date'], datetime):
                 time_difference = now - profile_data['date']
@@ -576,91 +660,6 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
         if config.GEOIP_ENABLED and os.path.exists(config.GEOIP_DB_PATH): # Remove only if GeoIP was enabled and DB exists
             os.remove(config.GEOIP_DB_PATH)
         await session_for_geoip.close() # Close GeoIP session
-
-
-class ChannelHistoryManager:
-    """Manages channel history (failures, 'No More Pages', circuit breaker)."""
-
-    def __init__(self, failure_file: str = config.FAILURE_HISTORY_FILE,
-                 no_more_pages_file: str = config.NO_MORE_PAGES_HISTORY_FILE,
-                 circuit_breaker_file: str = config.CIRCUIT_BREAKER_HISTORY_FILE): # Add circuit breaker file
-        """Initializes ChannelHistoryManager."""
-        self.failure_file = failure_file
-        self.no_more_pages_file = no_more_pages_file
-        self.circuit_breaker_file = circuit_breaker_file
-
-    def _load_json_history(self, filepath: str) -> Dict:
-        """Loads history from a JSON file, returns empty dict if file not found or load fails."""
-        history = json_load(filepath)
-        return history if history else {}
-
-    def _save_json_history(self, history: Dict, filepath: str) -> bool:
-        """Saves history to a JSON file."""
-        logging.debug(f"Saving history to '{filepath}'.") # Changed log level to debug
-        return json_save(history, filepath)
-
-    def load_failure_history(self) -> Dict:
-        """Loads channel failure history."""
-        logging.debug(f"Loading failure history from '{self.failure_file}'.") # Changed log level to debug
-        return self._load_json_history(self.failure_file)
-
-    def save_failure_history(self, history: Dict) -> bool:
-        """Saves channel failure history."""
-        return self._save_json_history(history, self.failure_file)
-
-    def load_no_more_pages_history(self) -> Dict:
-        """Loads 'No More Pages' history for channels."""
-        logging.debug(f"Loading 'No More Pages' history from '{self.no_more_pages_file}'.") # Changed log level to debug
-        return self._load_json_history(self.no_more_pages_file)
-
-    def save_no_more_pages_history(self, history: Dict) -> bool:
-        """Saves 'No More Pages' history for channels."""
-        return self._save_json_history(history, self.no_more_pages_file)
-
-    def load_circuit_breaker_history(self) -> Dict:
-        """Loads circuit breaker history from JSON file."""
-        logging.debug(f"Loading circuit breaker history from '{self.circuit_breaker_file}'.") # Changed log level to debug
-        return self._load_json_history(self.circuit_breaker_file)
-
-    def save_circuit_breaker_history(self, history: Dict) -> bool:
-        """Saves circuit breaker history to JSON file."""
-        return self._save_json_history(history, self.circuit_breaker_file)
-
-    def activate_circuit_breaker(self, channel_url: str) -> None:
-        """Activates circuit breaker for a channel, records activation time."""
-        history = self.load_circuit_breaker_history()
-        history[channel_url] = datetime.now(timezone.utc).isoformat() # Store activation timestamp
-        self.save_circuit_breaker_history(history)
-        logging.info(f"Circuit breaker activated for channel '{channel_url}'.")
-
-    def deactivate_circuit_breaker(self, channel_url: str) -> None:
-        """Deactivates circuit breaker for a channel."""
-        history = self.load_circuit_breaker_history()
-        if channel_url in history:
-            del history[channel_url]
-            self.save_circuit_breaker_history(history)
-            logging.info(f"Circuit breaker deactivated for channel '{channel_url}'.")
-
-    def is_circuit_breaker_active(self, channel_url: str) -> bool:
-        """Checks if circuit breaker is active for a channel and if cooldown period has expired."""
-        history = self.load_circuit_breaker_history()
-        if channel_url in history:
-            activation_time_str = history[channel_url]
-            try:
-                activation_time = datetime.fromisoformat(activation_time_str).replace(tzinfo=timezone.utc)
-                cooldown_expiration_time = activation_time + timedelta(seconds=config.CIRCUIT_BREAKER_COOLDOWN)
-                if datetime.now(timezone.utc) < cooldown_expiration_time:
-                    logging.debug(f"Circuit breaker is active for '{channel_url}', cooldown expires at {cooldown_expiration_time.strftime('%Y-%m-%d %H:%M:%S UTC')}.") # Debug log
-                    return True
-                else:
-                    logging.info(f"Circuit breaker cooldown expired for '{channel_url}'. Deactivating.")
-                    self.deactivate_circuit_breaker(channel_url) # Deactivate if cooldown expired
-                    return False
-            except ValueError as e:
-                logging.error(f"Error parsing circuit breaker activation time for '{channel_url}': {e}. Deactivating circuit breaker.")
-                self.deactivate_circuit_breaker(channel_url) # Deactivate if parsing error
-                return False
-        return False # Circuit breaker not active
 
 
 async def load_channels_async(channels_file: str = config.TELEGRAM_CHANNELS_FILE) -> List[str]: # Use config for default channel file
@@ -724,6 +723,7 @@ def save_results(final_profiles_scored: List[Dict], profiles_to_save: List[Dict]
 
     channel_history_manager.save_failure_history(channel_failure_counts)
     channel_history_manager.save_no_more_pages_history(no_more_pages_counts)
+    channel_history_manager.save_circuit_breaker_history(channel_history_manager.load_circuit_breaker_history()) # Ensure circuit breaker history is also saved
 
 
 def log_statistics(start_time: datetime, initial_channels_count: int, channels_parsed_count: int, parsed_profiles: List[Dict],
