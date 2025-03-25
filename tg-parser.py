@@ -22,6 +22,7 @@ class Config:
     """Configuration parameters for the profile parser."""
     MAX_THREADS_PARSING = 30
     REQUEST_TIMEOUT_AIOHTTP = 30
+    REQUEST_DELAY = 1.0  # Delay between requests in seconds
     MIN_PROFILES_TO_DOWNLOAD = 1000
     MAX_PROFILES_TO_DOWNLOAD = 200000
     ALLOWED_PROTOCOLS = {"vless", "hy2", "tuic", "trojan", "ss"}
@@ -38,6 +39,7 @@ class Config:
     MAX_FAILED_CHECKS = 9
     FAILURE_HISTORY_FILE = 'channel_failure_history.json'
     NO_MORE_PAGES_HISTORY_FILE = 'no_more_pages_history.json'
+    CIRCUIT_BREAKER_HISTORY_FILE = 'circuit_breaker_history.json'
     MAX_NO_MORE_PAGES_COUNT = 9
     PROFILE_FRESHNESS_DAYS = 7
     CONFIG_FILE = 'config.json'
@@ -47,8 +49,18 @@ class Config:
     OUTPUT_CONFIG_FILE = 'config-tg.txt'
     GEOIP_DB_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2025.03.13/GeoLite2-Country.mmdb"
     GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
-    GEOIP_ENABLED_DEFAULT = True  # Default to GeoIP enabled
+    GEOIP_ENABLED_DEFAULT = True
     GEOIP_ENABLED = GEOIP_ENABLED_DEFAULT
+    CHANNEL_RETRY_ATTEMPTS = 3  # Number of retries for channel processing
+    CHANNEL_RETRY_DELAY = 5  # Delay between channel retries in seconds
+    CIRCUIT_BREAKER_THRESHOLD = 3  # Consecutive failures to activate circuit breaker
+    CIRCUIT_BREAKER_COOLDOWN = 3600  # Circuit breaker cooldown period in seconds (1 hour)
+    USER_AGENTS = [  # List of User-Agent strings for rotation
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0",
+    ]
 
 
 VLESS_EMOJI = "🌠"
@@ -161,10 +173,14 @@ def calculate_profile_score(profile: str, score_weights: Dict) -> int:
 
 async def fetch_channel_page_async(session: aiohttp.ClientSession, channel_url: str, attempt: int) -> Optional[str]:
     """Asynchronously fetches a channel page with retry logic, handling specific aiohttp errors."""
+    random_user_agent = random.choice(config.USER_AGENTS)
+    headers = {'User-Agent': random_user_agent}
+
     for attempt_num in range(attempt, 3):
         try:
-            async with session.get(f'https://t.me/s/{channel_url}', timeout=config.REQUEST_TIMEOUT_AIOHTTP, ssl=False) as response:
+            async with session.get(f'https://t.me/s/{channel_url}', timeout=config.REQUEST_TIMEOUT_AIOHTTP, ssl=False, headers=headers) as response:
                 response.raise_for_status()
+                await asyncio.sleep(config.REQUEST_DELAY)  # Rate limiting delay
                 return await response.text()
         except (aiohttp.ClientConnectionError, aiohttp.ClientResponseError) as e: # Specific ClientErrors
             log_message = f"aiohttp connection error for {channel_url}, attempt {attempt_num + 1}/3: {e}"
@@ -222,23 +238,29 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
                                 telegram_channel_names: List[str], channels_parsed_count: int,
                                 channels_with_profiles: Set[str], channel_failure_counts: Dict[str, int],
                                 channels_to_remove: List[str], no_more_pages_counts: Dict[str, int],
-                                allowed_protocols: Set[str], profile_score_func) -> None:
-    """Asynchronously processes a Telegram channel to extract profiles."""
-    failed_check = False
-    channel_removed_in_run = False
-    async with thread_semaphore:
-        try:
-            html_pages = []
-            current_url = channel_url
-            channel_profiles = []
-            god_tg_name = False # More descriptive variable name
-            pattern_datbef = re.compile(r'(?:data-before=")(\d*)')
-            no_more_pages_in_run = False
+                                allowed_protocols: Set[str], profile_score_func, channel_history_manager: ChannelHistoryManager) -> None: # Pass history manager
+    """Asynchronously processes a Telegram channel to extract profiles with retry and circuit breaker."""
+    if channel_history_manager.is_circuit_breaker_active(channel_url):
+        logging.warning(f"Circuit breaker active for {channel_url}. Skipping channel.")
+        return
 
-            async with aiohttp.ClientSession() as session:
-                for attempt in range(2):
+    for retry_attempt in range(config.CHANNEL_RETRY_ATTEMPTS): # Channel-level retry loop
+        failed_check = False
+        channel_removed_in_run = False
+        channel_session = None  # Define session outside try block for wider scope
+        try:
+            async with thread_semaphore:
+                html_pages = []
+                current_url = channel_url
+                channel_profiles = []
+                god_tg_name = False
+                pattern_datbef = re.compile(r'(?:data-before=")(\d*)')
+                no_more_pages_in_run = False
+
+                channel_session = aiohttp.ClientSession() # Create session within retry loop
+                for page_attempt in range(2): # Page fetch retry attempts
                     while True:
-                        html_page = await fetch_channel_page_async(session, current_url, attempt + 1)
+                        html_page = await fetch_channel_page_async(channel_session, current_url, page_attempt + 1)
                         if html_page:
                             html_pages.append(html_page)
                             last_datbef = re.findall(pattern_datbef, html_page)
@@ -250,12 +272,12 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
                             break
                         else:
                             failed_check = True
-                            break
+                            break # Break inner while loop to retry page fetch or move to next attempt
                     if failed_check:
-                        break
+                        break # Break page fetch retry loop if failed after attempts
 
                 if not html_pages:
-                    logging.warning(f"Failed to load pages for {channel_url} after retries. Skipping channel.")
+                    logging.warning(f"Failed to load pages for {channel_url} after retries. Skipping channel in this run.")
                     failed_check = True
                 else:
                     failed_check = False
@@ -268,36 +290,57 @@ async def process_channel_async(channel_url: str, parsed_profiles: List[Dict], t
                         profiles_on_page = await parse_profiles_from_page_async(page, channel_url, allowed_protocols, profile_score_func)
                         channel_profiles.extend(profiles_on_page)
 
-            if channel_profiles:
-                channels_with_profiles.add(channel_url)
-                channel_failure_counts[channel_url] = 0
-                no_more_pages_counts[channel_url] = 0
-                god_tg_name = True
+                if channel_profiles:
+                    channels_with_profiles.add(channel_url)
+                    channel_failure_counts[channel_url] = 0 # Reset failure count on success
+                    no_more_pages_counts[channel_url] = 0
+                    god_tg_name = True
+                else:
+                    god_tg_name = False
+
+                if not god_tg_name:
+                    channel_failure_counts[channel_url] = channel_failure_counts.get(channel_url, 0) + 1
+                    if channel_failure_counts[channel_url] >= config.MAX_FAILED_CHECKS and channel_url not in channels_to_remove:
+                        channels_to_remove.append(channel_url)
+                        channel_removed_in_run = True
+                        logging.info(f"Channel '{channel_url}' removed due to {config.MAX_FAILED_CHECKS} consecutive failures.")
+                    elif not channel_removed_in_run:
+                        logging.info(f"No profiles found in {channel_url}. Consecutive failures: {channel_failure_counts[channel_url]}/{config.MAX_FAILED_CHECKS}.")
+
+                if no_more_pages_in_run:
+                    no_more_pages_counts[channel_url] = no_more_pages_counts.get(channel_url, 0) + 1
+                    if no_more_pages_counts[channel_url] >= config.MAX_NO_MORE_PAGES_COUNT and channel_url not in channels_to_remove:
+                        channels_to_remove.append(channel_url)
+                        channel_removed_in_run = True
+                        logging.info(f"Channel '{channel_url}' removed due to {config.MAX_NO_MORE_PAGES_COUNT} 'No More Pages' messages.")
+                    elif not channel_removed_in_run:
+                        logging.info(f"'No More Pages' message for '{channel_url}'. Consecutive messages: {no_more_pages_counts[channel_url]}/{config.MAX_NO_MORE_PAGES_COUNT}.")
+
+                parsed_profiles.extend(channel_profiles)
+                channel_history_manager.deactivate_circuit_breaker(channel_url) # Deactivate circuit breaker on successful processing
+                break # Break retry loop on successful channel processing
+
+        except Exception as channel_exception: # Catch-all for channel processing errors for retry logic
+            logging.error(f"Error processing channel {channel_url} (attempt {retry_attempt + 1}/{config.CHANNEL_RETRY_ATTEMPTS}): {channel_exception}")
+            if retry_attempt < config.CHANNEL_RETRY_ATTEMPTS - 1:
+                retry_delay = config.CHANNEL_RETRY_DELAY * (retry_attempt + 1) # Exponential backoff or similar could be implemented
+                logging.info(f"Retrying channel {channel_url} in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
             else:
-                god_tg_name = False
+                channel_failure_counts[channel_url] = channel_failure_counts.get(channel_url, 0) + 1 # Increment failure count even after retries fail
+                if channel_failure_counts[channel_url] >= config.CIRCUIT_BREAKER_THRESHOLD:
+                    channel_history_manager.activate_circuit_breaker(channel_url) # Activate circuit breaker after max retries fail
+                    logging.warning(f"Circuit breaker activated for {channel_url} after {config.CIRCUIT_BREAKER_THRESHOLD} failures.")
+                logging.error(f"Max retries for channel {channel_url} exceeded. Circuit breaker might be activated.")
 
-            if not god_tg_name:
-                channel_failure_counts[channel_url] = channel_failure_counts.get(channel_url, 0) + 1
-                if channel_failure_counts[channel_url] >= config.MAX_FAILED_CHECKS and channel_url not in channels_to_remove:
-                    channels_to_remove.append(channel_url)
-                    channel_removed_in_run = True
-                    logging.info(f"Channel '{channel_url}' removed due to {config.MAX_FAILED_CHECKS} consecutive failures.")
-                elif not channel_removed_in_run:
-                    logging.info(f"No profiles found in {channel_url}. Consecutive failures: {channel_failure_counts[channel_url]}/{config.MAX_FAILED_CHECKS}.")
+        finally:
+            if channel_session:
+                await channel_session.close()
+            if not failed_check and not channel_removed_in_run:
+                break # Exit retry loop if channel was processed successfully
 
-            if no_more_pages_in_run:
-                no_more_pages_counts[channel_url] = no_more_pages_counts.get(channel_url, 0) + 1
-                if no_more_pages_counts[channel_url] >= config.MAX_NO_MORE_PAGES_COUNT and channel_url not in channels_to_remove:
-                    channels_to_remove.append(channel_url)
-                    channel_removed_in_run = True
-                    logging.info(f"Channel '{channel_url}' removed due to {config.MAX_NO_MORE_PAGES_COUNT} 'No More Pages' messages.")
-                elif not channel_removed_in_run:
-                    logging.info(f"'No More Pages' message for '{channel_url}'. Consecutive messages: {no_more_pages_counts[channel_url]}/{config.MAX_NO_MORE_PAGES_COUNT}.")
-
-            parsed_profiles.extend(channel_profiles)
-
-        except Exception as channel_exception: # Catch-all for unexpected channel processing errors
-            logging.error(f"Critical error processing channel {channel_url}: {channel_exception}")
+    else: # else block of for loop, executed if no 'break' was called in the loop (all retries failed)
+        logging.error(f"Channel {channel_url} processing failed after {config.CHANNEL_RETRY_ATTEMPTS} retries.")
 
 
 def clean_profile(profile_string: str, cleaning_rules: List[str]) -> str:
@@ -536,32 +579,29 @@ async def process_parsed_profiles_async(parsed_profiles_list: List[Dict]) -> Lis
 
 
 class ChannelHistoryManager:
-    """Manages channel history (failures, 'No More Pages')."""
+    """Manages channel history (failures, 'No More Pages', circuit breaker)."""
 
-    def __init__(self, failure_file: str = config.FAILURE_HISTORY_FILE, no_more_pages_file: str = config.NO_MORE_PAGES_HISTORY_FILE): # Use config for default files
+    def __init__(self, failure_file: str = config.FAILURE_HISTORY_FILE,
+                 no_more_pages_file: str = config.NO_MORE_PAGES_HISTORY_FILE,
+                 circuit_breaker_file: str = config.CIRCUIT_BREAKER_HISTORY_FILE): # Add circuit breaker file
         """Initializes ChannelHistoryManager."""
         self.failure_file = failure_file
         self.no_more_pages_file = no_more_pages_file
+        self.circuit_breaker_file = circuit_breaker_file
 
     def _load_json_history(self, filepath: str) -> Dict:
-        """Loads history from a JSON file."""
-        if not os.path.exists(filepath):
-            logging.warning(f"History file '{filepath}' not found. Creating: {filepath}")
-            if not json_save({}, filepath):
-                logging.error(f"Failed to create history file: {filepath}")
-                return {}
-            return {}
+        """Loads history from a JSON file, returns empty dict if file not found or load fails."""
         history = json_load(filepath)
         return history if history else {}
 
     def _save_json_history(self, history: Dict, filepath: str) -> bool:
         """Saves history to a JSON file."""
-        logging.info(f"Saving history to '{filepath}'.")
+        logging.debug(f"Saving history to '{filepath}'.") # Changed log level to debug
         return json_save(history, filepath)
 
     def load_failure_history(self) -> Dict:
         """Loads channel failure history."""
-        logging.info(f"Loading failure history from '{self.failure_file}'.")
+        logging.debug(f"Loading failure history from '{self.failure_file}'.") # Changed log level to debug
         return self._load_json_history(self.failure_file)
 
     def save_failure_history(self, history: Dict) -> bool:
@@ -570,12 +610,57 @@ class ChannelHistoryManager:
 
     def load_no_more_pages_history(self) -> Dict:
         """Loads 'No More Pages' history for channels."""
-        logging.info(f"Loading 'No More Pages' history from '{self.no_more_pages_file}'.")
+        logging.debug(f"Loading 'No More Pages' history from '{self.no_more_pages_file}'.") # Changed log level to debug
         return self._load_json_history(self.no_more_pages_file)
 
     def save_no_more_pages_history(self, history: Dict) -> bool:
         """Saves 'No More Pages' history for channels."""
         return self._save_json_history(history, self.no_more_pages_file)
+
+    def load_circuit_breaker_history(self) -> Dict:
+        """Loads circuit breaker history from JSON file."""
+        logging.debug(f"Loading circuit breaker history from '{self.circuit_breaker_file}'.") # Changed log level to debug
+        return self._load_json_history(self.circuit_breaker_file)
+
+    def save_circuit_breaker_history(self, history: Dict) -> bool:
+        """Saves circuit breaker history to JSON file."""
+        return self._save_json_history(history, self.circuit_breaker_file)
+
+    def activate_circuit_breaker(self, channel_url: str) -> None:
+        """Activates circuit breaker for a channel, records activation time."""
+        history = self.load_circuit_breaker_history()
+        history[channel_url] = datetime.now(timezone.utc).isoformat() # Store activation timestamp
+        self.save_circuit_breaker_history(history)
+        logging.info(f"Circuit breaker activated for channel '{channel_url}'.")
+
+    def deactivate_circuit_breaker(self, channel_url: str) -> None:
+        """Deactivates circuit breaker for a channel."""
+        history = self.load_circuit_breaker_history()
+        if channel_url in history:
+            del history[channel_url]
+            self.save_circuit_breaker_history(history)
+            logging.info(f"Circuit breaker deactivated for channel '{channel_url}'.")
+
+    def is_circuit_breaker_active(self, channel_url: str) -> bool:
+        """Checks if circuit breaker is active for a channel and if cooldown period has expired."""
+        history = self.load_circuit_breaker_history()
+        if channel_url in history:
+            activation_time_str = history[channel_url]
+            try:
+                activation_time = datetime.fromisoformat(activation_time_str).replace(tzinfo=timezone.utc)
+                cooldown_expiration_time = activation_time + timedelta(seconds=config.CIRCUIT_BREAKER_COOLDOWN)
+                if datetime.now(timezone.utc) < cooldown_expiration_time:
+                    logging.debug(f"Circuit breaker is active for '{channel_url}', cooldown expires at {cooldown_expiration_time.strftime('%Y-%m-%d %H:%M:%S UTC')}.") # Debug log
+                    return True
+                else:
+                    logging.info(f"Circuit breaker cooldown expired for '{channel_url}'. Deactivating.")
+                    self.deactivate_circuit_breaker(channel_url) # Deactivate if cooldown expired
+                    return False
+            except ValueError as e:
+                logging.error(f"Error parsing circuit breaker activation time for '{channel_url}': {e}. Deactivating circuit breaker.")
+                self.deactivate_circuit_breaker(channel_url) # Deactivate if parsing error
+                return False
+        return False # Circuit breaker not active
 
 
 async def load_channels_async(channels_file: str = config.TELEGRAM_CHANNELS_FILE) -> List[str]: # Use config for default channel file
@@ -607,7 +692,7 @@ async def run_parsing_async(telegram_channel_names_to_parse: List[str], channel_
             process_channel_async(channel_name, parsed_profiles, thread_semaphore, telegram_channel_names_to_parse,
                                     channels_parsed_count, channels_with_profiles, channel_failure_counts,
                                     channels_to_remove, no_more_pages_counts, config.ALLOWED_PROTOCOLS,
-                                    calculate_profile_score) # Pass calculate_profile_score function
+                                    calculate_profile_score, channel_history_manager) # Pass history manager and score function
         )
         tasks.append(task)
 
@@ -678,6 +763,14 @@ async def load_config_from_json(config: Config, config_file_path: str):
         config.MIN_PROFILES_TO_DOWNLOAD = config_data.get('min_profiles_to_download', config.MIN_PROFILES_TO_DOWNLOAD)
         config.MAX_PROFILES_TO_DOWNLOAD = config_data.get('max_profiles_to_download', config.MAX_PROFILES_TO_DOWNLOAD)
         config.GEOIP_ENABLED = config_data.get('geoip_enabled', config.GEOIP_ENABLED_DEFAULT) # Load GeoIP enabled setting
+        config.CHANNEL_RETRY_ATTEMPTS = config_data.get('channel_retry_attempts', config.CHANNEL_RETRY_ATTEMPTS)
+        config.CHANNEL_RETRY_DELAY = config_data.get('channel_retry_delay', config.CHANNEL_RETRY_DELAY)
+        config.CIRCUIT_BREAKER_THRESHOLD = config_data.get('circuit_breaker_threshold', config.CIRCUIT_BREAKER_THRESHOLD)
+        config.CIRCUIT_BREAKER_COOLDOWN = config_data.get('circuit_breaker_cooldown', config.CIRCUIT_BREAKER_COOLDOWN)
+        config.REQUEST_DELAY = config_data.get('request_delay', config.REQUEST_DELAY)
+        user_agents_config = config_data.get('user_agents')
+        if isinstance(user_agents_config, list) and user_agents_config: # Validate user_agents from config
+            config.USER_AGENTS = user_agents_config
         logging.info(f'Configuration loaded from {config_file_path}.')
     else:
         logging.warning(f'Failed to load configuration from {config_file_path}. Using default values.')
