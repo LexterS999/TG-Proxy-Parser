@@ -15,6 +15,6 @@
   "max_no_more_pages_count": 12,
   "max_threads_parsing": 10,
   "request_timeout_aiohttp": 60,
-  "min_profiles_to_download": 1000,
+  "min_profiles_to_download": 10000,
   "max_profiles_to_download": 200000
 }
